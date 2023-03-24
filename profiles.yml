@@ -1,0 +1,20 @@
+blocktrekker_admin:
+  target: test # this is the default target
+  outputs:
+    test:
+      type: bigquery # database type
+      method: service-account # authentication method
+      ### database-specific connection details
+      keyfile: ../keys/blocktrekker-admin.json
+      threads: 1
+      project: blocktrekker
+      dataset: decoded_projects
+      timeout_seconds: 200
+      location: US
+      priority: interactive # Big Query info
+
+    <target-name>: # additional targets
+      ...
+
+<profile-name>: # additional profiles
+  ...

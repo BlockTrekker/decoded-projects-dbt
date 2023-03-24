@@ -1,0 +1,8 @@
+
+target/
+dbt_packages/
+logs/
+*.csv
+*.json
+decoded_projects/seeds/eth_contracts_mapping.csv
+decoded_projects/seeds/eth_contracts.json
