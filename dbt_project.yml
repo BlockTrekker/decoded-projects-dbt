@@ -33,7 +33,7 @@ clean-targets:         # directories to be removed by `dbt clean`
 # files using the `{{ config(...) }}` macro.
 models:
   decoded_projects:
-      +schema: test_2
+      +schema: model
       +materialized: table
       # aave:
       # +schema: aave

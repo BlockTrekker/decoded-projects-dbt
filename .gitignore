@@ -6,3 +6,6 @@ logs/
 *.json
 decoded_projects/seeds/eth_contracts_mapping.csv
 decoded_projects/seeds/eth_contracts.json
+bin
+*venv*
+decoded_contracts_venvi
