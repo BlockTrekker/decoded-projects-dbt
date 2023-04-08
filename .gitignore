@@ -3,9 +3,8 @@ target/
 dbt_packages/
 logs/
 *.csv
-*.json
+static_data
 decoded_projects/seeds/eth_contracts_mapping.csv
 decoded_projects/seeds/eth_contracts.json
 bin
-*venv*
-decoded_contracts_venvi
+decoded-projects

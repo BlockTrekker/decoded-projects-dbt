@@ -2,8 +2,8 @@ import json
 import csv
 
 # change the file name and directory to change a new file
-json_name = 'json_data/dune_abi_id_abi_multiabi.json'
-csv_name = 'seeds/dune_abi_id_mapping_multiabi.csv'
+json_name = 'json_data/decoded_contracts/decoded_eth_contracts000000000074.json'
+csv_name = 'seeds/decoded_eth_contracts000000000074.csv'
 
 # Load the JSON data from a file
 with open(json_name) as f:
