@@ -1,7 +1,7 @@
 import requests
 import json
-from web3 import Web3
 import os
+import glob
 from google.cloud import bigquery
 # from query_scheduler import schedule_query
 # from get_last_run import get_last_run_time
@@ -9,7 +9,7 @@ from google.cloud import bigquery
 
 
     
-credential_path = "../keys/-key.json"
+credential_path = "../keys/blocktrekker-admin.json"
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credential_path
 
 # Get the Etherscan API key
@@ -41,10 +41,10 @@ class Function:
     self.input_types = []
     self.query_lines = []
 
-def query_etherscan(address, etherscan_api_key):
-    response = requests.get(f"https://api.etherscan.io/api?module=contract&action=getsourcecode&address={address}&apikey={etherscan_api_key}")
-    result = {"contract_name" : response.json()['result'][0]['ContractName'], "abi" : response.json()['result'][0]['ABI']}
-    return result
+# def query_etherscan(address, etherscan_api_key):
+#     response = requests.get(f"https://api.etherscan.io/api?module=contract&action=getsourcecode&address={address}&apikey={etherscan_api_key}")
+#     result = {"contract_name" : response.json()['result'][0]['ContractName'], "abi" : response.json()['result'][0]['ABI']}
+#     return result
 
 count_5 = 0
 fxn_table = "`clustered_sources.clustered_traces`"
@@ -56,140 +56,143 @@ count1 = 0
 amt = 0
 query_body_list = []
 
-# Get the dune contract mapping
-with open('json_data/dune_contract_mapping.json') as f:
-    contents = f.read()
-    data = json.loads(contents)
-    dune_contract_mapping = data
-    dune_address = []
-    for val in data:
-        dune_address.append(val["Address"])
-    
-# Get the data for decoded_contracts from BQ
-with open('json_data/decoded_contracts.json') as f:
-    decoded_contracts = []
-    decoded_addresses = []
-    decoded_fxs_evts = []
-    for ln in f:
-        data = json.loads(ln)
-        decoded_contracts.append(data)
-        decoded_addresses.append(data["address"])
+# # Get the dune contract mapping
+# with open('json_data/dune_contract_mapping.json') as f:
+#     contents = f.read()
+#     data = json.loads(contents)
+#     dune_contract_mapping = data
+#     dune_address = []
+#     for val in data:
+#         dune_address.append(val["Address"])
 
-# Get around the f string \ problem
-new_line = "\n" 
+file_list = glob.glob('static_data/decoded_eth_contract_*')
 
-for contract in decoded_contracts:
-    address = contract["address"]
-    for evt in contract["evts"]:
-        evt_id = Event(address,evt["name"],evt["inputs"])
-        count = 0
-        for input in evt_id.inputs:
-            if input["name"] == "":
-                input["name"] = f"input_{count}"
-            elif input["name"] == "from":
-                input["name"] = "from_address"
-            elif input["name"] == "to":
-                input["name"] = "to_address"
-            elif input["name"] == "limit":
-                input["name"] = "_limit"
-            evt_id.query_lines.append(f"SAFE_CAST(topics[SAFE_OFFSET({count})] as {input['type']}) as {input['name']}")
-            count = count + 1 
-        evt_id.full_name = evt["signature"]
-        evt_id.evt_hash = evt["evt_hash"]
-        evt_id.query_body = f"""
-CREATE OR REPLACE TABLE `{project_id}.{dataset_id}.contracts.{evt["name"]}` 
-AS
-SELECT
-{','.join(evt_id.query_lines)},
-log_index,
-transaction_hash,
-transaction_index,
-address as contract_address,
-block_number,
-block_timestamp,
-evt_hash
-FROM {evt_table}{new_line}WHERE evt_hash = '{evt_id.evt_hash}'
-AND address = '{address}';"""
-        # print(evt_id.query_body)
-        count_5 = count_5 + 1
+for file in file_list: 
+    # Get the data for decoded_contracts from BQ
+    with open(file) as f:
+        data = {}
+        json_data = json.load(f)
+        decoded_contracts = []
+        decoded_addresses = []
+        decoded_fxs_evts = []
+        for ln in json_data:
+            print(ln["address"])
+            decoded_contracts.append(ln)
+            decoded_addresses.append(ln["address"])
 
-    for call in contract["calls"]:
-        call_id = Function(address,call["name"],call["inputs"])
-        count = 0
-        for input in call_id.inputs:
-            if input["name"] == "":
-                input["name"] = f"input_{count}"
-            elif input["name"] == "from":
-                input["name"] = "from_address"
-            elif input["name"] == "to":
-                input["name"] = "to_address"
-            elif input["name"] == "limit":
-                input["name"] = "_limit"
-            call_id.query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * count}, {64}) as {input['type']}) as {input['name']}")
-            count = count + 1 
-        call_id.full_name = call["signature"]
-        call_id.method_id = call["method_id"]
-        call_id.query_body = f"""
-CREATE OR REPLACE TABLE `{project_id}.{dataset_id}.{call["name"]}`  
-AS
-SELECT 
-    {','.join(call_id.query_lines)},
-                output as call_output,
-    trace_id,
-    status,
-    error,
-    trace_type,
-    trace_address,
-    transaction_hash,
-    transaction_index,
-    from_address as trace_from_address,
-    to_address as trace_to_address,
-    value as trace_value,
-    block_timestamp,
-    block_number,
-    block_hash,
-    method_id
-FROM {fxn_table}
-WHERE LEFT(input,10) = '{call_id.method_id}'
-AND to_address = '{address}';"""
-        count_5 = count_5 + 1
-        # print(call_id.query_body)
+    # Get around the f string \ problem
+    new_line = "\n" 
 
-#             contract_dict[result["name"] + "_fx"] = fx_id
-    
-#     for name in contract.evt_names:
-#         if  len(contract_dict[name].input_names) > 0:
-#             full_name = contract_dict[name].full_name
-#             query_body = contract_dict[name].query_body
-#             query_inputs = contract_dict[name].input_names
-#             query_types = contract_dict[name].input_types
-#             table_id = f"{contract_name}_{name}"
-#             # amt = amt + query_bigquery(query_body,table_id, True)
-#             # schedule_query(project_id, dataset_id, table_id, query_body, interval_min, partitioning_field, append_or_truncate)
-#             # print(count1)
-#             # count1= count1 + 1
-#             query_body_list.append(query_body)
-#             # schedule_query(project_id, dataset_id, table_id, query_body, interval_min, partitioning_field, append_or_truncate)    
-            
-#     for name in contract.fx_names:
-#         if  len(contract_dict[name].input_names) > 0:
-#             full_name = contract_dict[name].full_name
-#             query_body = contract_dict[name].query_body
-#             query_inputs = contract_dict[name].input_names
-#             query_types = contract_dict[name].input_types
-#             table_id = f"{contract_name}_{name}"
-#             # amt = amt + query_bigquery(query_body,table_id, True)
-#             # schedule_query(project_id, dataset_id, table_id, query_body, interval_min, partitioning_field, append_or_truncate)
-#             # print(count1)
-#             count1 = count1 + 1
-#             query_body_list.append(query_body)
-#             # schedule_query(project_id, dataset_id, table_id, query_body, interval_min, partitioning_field, append_or_truncate)    
+    for contract in decoded_contracts:
+        address = contract["address"]
+        for evt in contract["evts"]:
+            evt_id = Event(address,evt["name"],evt["inputs"])
+            count = 0
+            for input in evt_id.inputs:
+                if input["name"] == "":
+                    input["name"] = f"input_{count}"
+                elif input["name"] == "from":
+                    input["name"] = "from_address"
+                elif input["name"] == "to":
+                    input["name"] = "to_address"
+                elif input["name"] == "limit":
+                    input["name"] = "_limit"
+                evt_id.query_lines.append(f"SAFE_CAST(topics[SAFE_OFFSET({count})] as {input['type']}) as {input['name']}")
+                count = count + 1 
+            evt_id.full_name = evt["signature"]
+            evt_id.evt_hash = evt["evt_hash"]
+            evt_id.query_body = f"""
+    CREATE OR REPLACE TABLE `{project_id}.{dataset_id}.contracts.{evt["name"]}` 
+    AS
+    SELECT
+        address as contract_address,
+        {','.join(evt_id.query_lines)},
+        block_number as evt_block_number,
+        block_timestamp as evt_block_time,
+        log_index as evt_index,
+        transaction_hash as evt_tx_hash,
+        transaction_index,
+        evt_hash
+    FROM {evt_table}{new_line}WHERE evt_hash = '{evt_id.evt_hash}'
+    AND address = '{address}';"""
+            print(evt_id.query_body)
+            count_5 = count_5 + 1
 
-# # query_body = f"{new_line}".join(query_body_list)
+        for call in contract["calls"]:
+            call_id = Function(address,call["name"],call["inputs"])
+            count = 0
+            for input in call_id.inputs:
+                if input["name"] == "":
+                    input["name"] = f"input_{count}"
+                elif input["name"] == "from":
+                    input["name"] = "from_address"
+                elif input["name"] == "to":
+                    input["name"] = "to_address"
+                elif input["name"] == "limit":
+                    input["name"] = "_limit"
+                call_id.query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * count}, {64}) as {input['type']}) as {input['name']}")
+                count = count + 1 
+            call_id.full_name = call["signature"]
+            call_id.method_id = call["method_id"]
+            call_id.query_body = f"""
+    CREATE OR REPLACE TABLE `{project_id}.{dataset_id}.{call["name"]}`  
+    AS
+    SELECT 
+        {','.join(call_id.query_lines)},
+        transaction_hash as call_tx_hash,
+        to_address as contract_address,
+        output as output_0,
+        block_number as call_block_number,
+        block_timestamp as call_block_time,
+        status as call_success,
+        trace_address as call_trace_address,
+        trace_id as call_trace_id,
+        error as call_error,
+        trace_type as call_trace_type,
+        from_address as trace_from_address,
+        value as trace_value,
+        method_id
+    FROM {fxn_table}
+    WHERE LEFT(input,10) = '{call_id.method_id}'
+    AND to_address = '{address}';"""
+            count_5 = count_5 + 1
+            print(call_id.query_body)
+            quit()
+    #             contract_dict[result["name"] + "_fx"] = fx_id
+        
+    #     for name in contract.evt_names:
+    #         if  len(contract_dict[name].input_names) > 0:
+    #             full_name = contract_dict[name].full_name
+    #             query_body = contract_dict[name].query_body
+    #             query_inputs = contract_dict[name].input_names
+    #             query_types = contract_dict[name].input_types
+    #             table_id = f"{contract_name}_{name}"
+    #             # amt = amt + query_bigquery(query_body,table_id, True)
+    #             # schedule_query(project_id, dataset_id, table_id, query_body, interval_min, partitioning_field, append_or_truncate)
+    #             # print(count1)
+    #             # count1= count1 + 1
+    #             query_body_list.append(query_body)
+    #             # schedule_query(project_id, dataset_id, table_id, query_body, interval_min, partitioning_field, append_or_truncate)    
+                
+    #     for name in contract.fx_names:
+    #         if  len(contract_dict[name].input_names) > 0:
+    #             full_name = contract_dict[name].full_name
+    #             query_body = contract_dict[name].query_body
+    #             query_inputs = contract_dict[name].input_names
+    #             query_types = contract_dict[name].input_types
+    #             table_id = f"{contract_name}_{name}"
+    #             # amt = amt + query_bigquery(query_body,table_id, True)
+    #             # schedule_query(project_id, dataset_id, table_id, query_body, interval_min, partitioning_field, append_or_truncate)
+    #             # print(count1)
+    #             count1 = count1 + 1
+    #             query_body_list.append(query_body)
+    #             # schedule_query(project_id, dataset_id, table_id, query_body, interval_min, partitioning_field, append_or_truncate)    
 
-# # query_bigquery(query_body,"test", True)
-# # print(query_body)
-# # schedule_query(project_id, dataset_id, table_id, query_body, interval_min, partitioning_field, append_or_truncate)    
-    
+    # # query_body = f"{new_line}".join(query_body_list)
+
+    # # query_bigquery(query_body,"test", True)
+    # # print(query_body)
+    # # schedule_query(project_id, dataset_id, table_id, query_body, interval_min, partitioning_field, append_or_truncate)    
+        
 
 print(count_5)

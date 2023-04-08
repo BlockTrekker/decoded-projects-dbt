@@ -2,6 +2,7 @@ import glob
 import os
 import pandas
 
+# This script is needed to take multiple files from gcp download and combine them into one file.
 
 # These were actually csv files downloaded from bq with a json extension.
 # This changes the extension to csv.
