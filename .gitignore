@@ -7,4 +7,4 @@ static_data
 decoded_projects/seeds/eth_contracts_mapping.csv
 decoded_projects/seeds/eth_contracts.json
 bin
-decoded-projects
+decoded-projects-venv

@@ -76,7 +76,6 @@ for file in file_list:
         decoded_addresses = []
         decoded_fxs_evts = []
         for ln in json_data:
-            print(ln["address"])
             decoded_contracts.append(ln)
             decoded_addresses.append(ln["address"])
 
@@ -85,6 +84,15 @@ for file in file_list:
 
     for contract in decoded_contracts:
         address = contract["address"]
+        name = contract["name"]
+        namespace = f"""{contract["namespace"]}_ethereum"""
+        dataset_creation_body = f"""
+CREATE SCHEMA blocktrekker.{namespace}
+  OPTIONS (
+    description = 'DESCRIPTION',
+    location = 'US'
+  )
+"""
         for evt in contract["evts"]:
             evt_id = Event(address,evt["name"],evt["inputs"])
             count = 0
@@ -102,20 +110,26 @@ for file in file_list:
             evt_id.full_name = evt["signature"]
             evt_id.evt_hash = evt["evt_hash"]
             evt_id.query_body = f"""
-    CREATE OR REPLACE TABLE `{project_id}.{dataset_id}.contracts.{evt["name"]}` 
+    CREATE OR REPLACE TABLE `{project_id}.{namespace}.{evt["name"]}` 
     AS
     SELECT
         address as contract_address,
-        {','.join(evt_id.query_lines)},
+        {','.join(evt_id.query_lines) if evt_id.query_lines else ''},
         block_number as evt_block_number,
         block_timestamp as evt_block_time,
         log_index as evt_index,
         transaction_hash as evt_tx_hash,
         transaction_index,
         evt_hash
-    FROM {evt_table}{new_line}WHERE evt_hash = '{evt_id.evt_hash}'
-    AND address = '{address}';"""
-            print(evt_id.query_body)
+    FROM 
+        {evt_table}
+    WHERE 
+        evt_hash = '{evt_id.evt_hash}'
+    AND 
+        address = '{address}'
+    AND 
+        block_timestamp >= created_ts;"""
+            
             count_5 = count_5 + 1
 
         for call in contract["calls"]:
@@ -135,10 +149,10 @@ for file in file_list:
             call_id.full_name = call["signature"]
             call_id.method_id = call["method_id"]
             call_id.query_body = f"""
-    CREATE OR REPLACE TABLE `{project_id}.{dataset_id}.{call["name"]}`  
+    CREATE OR REPLACE TABLE `{project_id}.{namespace}.{call["name"]}`  
     AS
     SELECT 
-        {','.join(call_id.query_lines)},
+        {','.join(call_id.query_lines) if call_id.query_lines else ''},
         transaction_hash as call_tx_hash,
         to_address as contract_address,
         output as output_0,
@@ -152,14 +166,17 @@ for file in file_list:
         from_address as trace_from_address,
         value as trace_value,
         method_id
-    FROM {fxn_table}
-    WHERE LEFT(input,10) = '{call_id.method_id}'
-    AND to_address = '{address}';"""
+    FROM 
+        {fxn_table}
+    WHERE 
+        LEFT(input,10) = '{call_id.method_id}'
+    AND 
+        to_address = '{address}'
+    AND 
+        block_timestamp >= created_ts;"""
             count_5 = count_5 + 1
-            print(call_id.query_body)
-            quit()
+
     #             contract_dict[result["name"] + "_fx"] = fx_id
-        
     #     for name in contract.evt_names:
     #         if  len(contract_dict[name].input_names) > 0:
     #             full_name = contract_dict[name].full_name

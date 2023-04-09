@@ -3,7 +3,7 @@ import json
 import glob
 
 
-file_list = glob.glob('static_data/decoded_contracts/decoded_eth_contracts00000000000*')
+file_list = glob.glob('static_data/decoded_contracts_csv/eth_decoded_contracts0000000000*')
 print(file_list)
 for file in file_list:
     csv_file = file
@@ -17,7 +17,7 @@ for file in file_list:
         # Create a list of dictionaries for each row
         rows = []
         for row in reader:
-            d = {"address": row[0], "evts": json.loads(row[1]), "calls": json.loads(row[2])}
+            d = {"address": row[0], "name": row[1], "namespace": row[2], "created_ts": row[3], "evts": json.loads(row[4]), "calls": json.loads(row[5])}
             rows.append(d)
 
         # # Create a JSON object
