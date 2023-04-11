@@ -31,13 +31,16 @@ clean-targets:         # directories to be removed by `dbt clean`
 # In this example config, we tell dbt to build all models in the example/
 # directory as views. These settings can be overridden in the individual model
 # files using the `{{ config(...) }}` macro.
-models:
-  decoded_projects:
-      +schema: model
-      +materialized: table
-      # aave:
-      # +schema: aave
-      # +materialized: view
 
+# sources:
+#   - name: decoded_contracts
+#     description: "Decoded Contracts"
+#     tables:
+#       - name: dune_abis
 
-  
+#   - name: crypto_ethereum_contracts
+#     database: bigquery-public-data
+#     description: "Ethereum Contracts from Public Crypto Dataset"
+#     tables:
+#       - name: contracts
+#         schema: crypto_ethereum

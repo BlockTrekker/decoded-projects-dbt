@@ -37,41 +37,31 @@ class Function:
     self.input_types = []
     self.query_lines = []
 
-def create_dbt_sql_file(evt_id, name, namespace):
-    # Create the directory
-    os.makedirs(f"""models/{namespace}""", exist_ok=True)
-    # Create the dbt sql file
-    with open(f"""models/{namespace}/{name}.sql""", "w") as f:
-        f.write(evt_id.query_body)
-    # print("Created dbt sql file")
-
-def count_duplicates(current_string, strings_list):
-    unique_strings = set(strings_list)
-    count = 0
-    for string in unique_strings:
-        if string == current_string:
-            count += 1
-    return count - 1 if count > 1 else 0
-
 # def query_etherscan(address, etherscan_api_key):
 #     response = requests.get(f"https://api.etherscan.io/api?module=contract&action=getsourcecode&address={address}&apikey={etherscan_api_key}")
 #     result = {"contract_name" : response.json()['result'][0]['ContractName'], "abi" : response.json()['result'][0]['ABI']}
 #     return result
 
+def find_duplicates(strings_list):
+    unique_strings = set()
+    duplicates = set()
+    for string in strings_list:
+        if string in unique_strings:
+            duplicates.add(string)
+        else:
+            unique_strings.add(string)
+    return duplicates
+
 count_5 = 0
-fxn_table = "{{ source('clustered_sources', 'clustered_traces') }}"
-evt_table = "{{ source('clustered_sources', 'clustered_logs') }}"
+fxn_table = "`clustered_sources.clustered_traces`"
+evt_table = "`clustered_sources.clustered_logs`"
 
 project_id = "blocktrekker"
 dataset_id = "spells"
 count1 = 0
 amt = 0
-duplicate_list_evt = []
-duplicate_list_call = []
 query_body_list = []
 estimated_cost = 0
-left_bracket = "{"
-right_bracket = "}"
 
 schema_dict = {
     "uint32[]":"INT64",
@@ -105,11 +95,11 @@ schema_dict = {
 file_list = glob.glob('static_data/decoded_eth_contract_*')
 
 for file in file_list: 
-    print("new_file_read")
     # Get the data for decoded_contracts from BQ
     with open(file) as f:
         data = {}
         json_data = json.load(f)
+        name_list = []
         decoded_contracts = []
         decoded_addresses = []
         decoded_fxs_evts = []
@@ -119,20 +109,16 @@ for file in file_list:
 
     # Get around the f string \ problem
     new_line = "\n" 
+
     for contract in decoded_contracts:
         address = contract["address"]
         name = contract["name"]
         namespace = f"""{contract["namespace"]}_ethereum"""
-        # namespace = "spells"
         created_ts = contract["created_ts"]
+
         # estimated_cost = estimated_cost + create_dataset(dataset_creation_body)
 
         for evt in contract["evts"]:
-            evt_name = evt["name"]
-            duplicate_number = count_duplicates(evt["name"],duplicate_list_evt)
-            duplicate_list_evt.append(evt_name)
-            if duplicate_number > 0:
-                evt["name"] = f"{evt['name']}_{str(duplicate_number)}"
             evt_id = Event(address,evt["name"],evt["inputs"])
             count = 0
             for input in evt_id.inputs:
@@ -155,43 +141,11 @@ for file in file_list:
                 count = count + 1 
             evt_id.full_name = evt["signature"]
             evt_id.evt_hash = evt["evt_hash"]
-            evt_id.query_body = f"""
-{left_bracket}{left_bracket}
-config(
-    materialized='view',
-    schema='{namespace}',
-    name='{namespace}',
-)
-{right_bracket}{right_bracket}
-SELECT
-    address as contract_address,
-    {','.join(evt_id.query_lines) + ',' if evt_id.query_lines != [] and evt_id.query_lines != '' else '' }
-    block_number as evt_block_number,
-    block_timestamp as evt_block_time,
-    log_index as evt_index,
-    transaction_hash as evt_tx_hash,
-    transaction_index,
-    evt_hash
-FROM 
-    {evt_table}
-WHERE 
-    evt_hash = '{evt_id.evt_hash}'
-AND 
-    address = '{address}'
-AND 
-    block_timestamp >= '{created_ts}'"""
-                    
-            create_dbt_sql_file(evt_id, evt['name'], namespace)
-            # estimated_cost = estimated_cost + query_bigquery(evt_id.query_body)
+            name_list.append(evt["name"])
+            
             count_5 = count_5 + 1
-            quit()
 
         for call in contract["calls"]:
-            call_name = call["name"]
-            duplicate_list_call.append(call_name)
-            duplicate_number = count_duplicates(call["name"],duplicate_list_call)
-            if duplicate_number > 0:
-                call["name"] = f"{call['name']}_{str(duplicate_number)}"
             call_id = Function(address,call["name"],call["inputs"])
             count = 0
             for input in call_id.inputs:
@@ -214,41 +168,7 @@ AND
                 count = count + 1 
             call_id.full_name = call["signature"]
             call_id.method_id = call["method_id"]
-            call_id.query_body = f"""
-{left_bracket}{left_bracket}
-config(
-    materialized='view',
-    schema='blocktrekker',
-    name='{namespace}',
-)
-{right_bracket}{right_bracket}
-    SELECT 
-        {','.join(call_id.query_lines) + ',' if call_id.query_lines != [] and call_id.query_lines != '' else ''}
-        transaction_hash as call_tx_hash,
-        to_address as contract_address,
-        output as output_0,
-        block_number as call_block_number,
-        block_timestamp as call_block_time,
-        status as call_success,
-        trace_address as call_trace_address,
-        trace_id as call_trace_id,
-        error as call_error,
-        trace_type as call_trace_type,
-        from_address as trace_from_address,
-        value as trace_value,
-        method_id
-    FROM 
-        {fxn_table}
-    WHERE 
-        LEFT(input,10) = '{call_id.method_id}'
-    AND 
-        to_address = '{address}'
-    AND 
-        block_timestamp >= '{created_ts}'"""
-            create_dbt_sql_file(call_id, call['name'], namespace)
-            count_5 = count_5 + 1
+            name_list.append(call["name"])
 
-
-
-print(count_5)
-print(f"total:{estimated_cost}")
+duplicates = find_duplicates(name_list)
+print("Duplicate strings:", duplicates)
