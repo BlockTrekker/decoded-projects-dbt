@@ -4,6 +4,10 @@ import glob
 from google.cloud import bigquery
 from query_bigquery import query_bigquery
 from create_dataset import create_dataset
+import csv
+import sys
+
+# json.field_size_limit(sys.maxsize)
     
 credential_path = "../keys/blocktrekker-admin.json"
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credential_path
@@ -41,16 +45,6 @@ class Function:
 #     response = requests.get(f"https://api.etherscan.io/api?module=contract&action=getsourcecode&address={address}&apikey={etherscan_api_key}")
 #     result = {"contract_name" : response.json()['result'][0]['ContractName'], "abi" : response.json()['result'][0]['ABI']}
 #     return result
-
-def find_duplicates(strings_list):
-    unique_strings = set()
-    duplicates = set()
-    for string in strings_list:
-        if string in unique_strings:
-            duplicates.add(string)
-        else:
-            unique_strings.add(string)
-    return duplicates
 
 count_5 = 0
 fxn_table = "`clustered_sources.clustered_traces`"
@@ -92,83 +86,79 @@ schema_dict = {
     "string":"STRING",
     "bytes":"BYTES"} 
 
-file_list = glob.glob('static_data/decoded_eth_contract_*')
+left_bracket = "{"
+right_bracket = "}"
 
+file_list = glob.glob('static_data/decoded_contracts*.json')
+# print(file_list)
+
+# json_string = '["{\"address\":\"0x9d9c46aca6a2c5ff6824a92d521b6381f9f8f1a9\",\"name\":\"MultiSigWalletWithDailyLimit\",\"namespace\":\"foundation\",\"created_ts\":\"2020-05-24T04:33:42Z\",\"signature\":\"MultiSigWalletWithDailyLimit_evt_Confirmation(address,uint256)\",\"type\":\"event\"}","{\"address\":\"0xab4e5b618fb8f1f3503689dfbdf801478ff6c252\",\"name\":\"MultiSigWalletWithDailyLimit\",\"namespace\":\"axieinfinity\",\"created_ts\":\"2020-02-07T18:05:04Z\",\"signature\":\"MultiSigWalletWithDailyLimit_evt_Confirmation(address,uint256)\",\"type\":\"event\"}"]'
+
+# python_object = json.loads(json_string.replace('"{', "{").replace('}"', "}"))
+
+# print(python_object[0]["address"])
+# quit()
 for file in file_list: 
+    print("new_file_read: ", file)
     # Get the data for decoded_contracts from BQ
-    with open(file) as f:
-        data = {}
-        json_data = json.load(f)
-        name_list = []
-        decoded_contracts = []
-        decoded_addresses = []
-        decoded_fxs_evts = []
-        for ln in json_data:
-            decoded_contracts.append(ln)
-            decoded_addresses.append(ln["address"])
+    # with open(file, 'r') as f:
+    #     # Read its contents as a string
+    #     contents = f.read()
 
-    # Get around the f string \ problem
-    new_line = "\n" 
+    # # Split the string into individual objects
+    # objects = contents.split("\n")
 
-    for contract in decoded_contracts:
-        address = contract["address"]
-        name = contract["name"]
-        namespace = f"""{contract["namespace"]}_ethereum"""
-        created_ts = contract["created_ts"]
+    #     # Remove any empty objects
+    # objects = [o for o in objects if o]
 
-        # estimated_cost = estimated_cost + create_dataset(dataset_creation_body)
+    # # remove all square brackets in data objects
+    # for object in objects:
+    #     sub_object = json.loads(object)
+    #     sub_object["data"] = sub_object["data"][1:-1]
 
-        for evt in contract["evts"]:
-            evt_id = Event(address,evt["name"],evt["inputs"])
-            count = 0
-            for input in evt_id.inputs:
-                if input["name"] == "":
-                    input["name"] = f"input_{count}"
-                elif input["name"] == "from":
-                    input["name"] = "from_address"
-                elif input["name"] == "to":
-                    input["name"] = "to_address"
-                elif input["name"] == "limit":
-                    input["name"] = "_limit"
-                elif input["name"] == "all":
-                    input["name"] = "_all"
-                if input["type"] not in schema_dict:
-                    if input["type"][:4].lower().startswith("uint"):
-                        input["type"] = "BIGNUMERIC"
-                    else:
-                        input["type"] = "STRING"
-                evt_id.query_lines.append(f"SAFE_CAST(topics[SAFE_OFFSET({count})] as {schema_dict[input['type']]}) as {input['name']}")
-                count = count + 1 
-            evt_id.full_name = evt["signature"]
-            evt_id.evt_hash = evt["evt_hash"]
-            name_list.append(evt["name"])
-            
-            count_5 = count_5 + 1
+    # # Add a square bracket at the beginning and end of the file
+    # wrapped = "[" + ",".join(objects) + "]"
 
-        for call in contract["calls"]:
-            call_id = Function(address,call["name"],call["inputs"])
-            count = 0
-            for input in call_id.inputs:
-                if input["name"] == "":
-                    input["name"] = f"input_{count}"
-                elif input["name"] == "from":
-                    input["name"] = "from_address"
-                elif input["name"] == "to":
-                    input["name"] = "to_address"
-                elif input["name"] == "limit":
-                    input["name"] = "_limit"
-                elif input["name"] == "all":
-                    input["name"] = "_all"                    
-                if input["type"] not in schema_dict:
-                    if input["type"][:4].lower().startswith("uint"):
-                        input["type"] = "BIGNUMERIC"
-                    else:
-                        input["type"] = "STRING"
-                call_id.query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * count}, {64}) as {schema_dict[input['type']]}) as {input['name']}")
-                count = count + 1 
-            call_id.full_name = call["signature"]
-            call_id.method_id = call["method_id"]
-            name_list.append(call["name"])
+    # # Write the JSON data to a new file
+    # with open(file, 'w') as f:
+    #     json.dump(json.loads(wrapped), f, indent=4)
 
-duplicates = find_duplicates(name_list)
-print("Duplicate strings:", duplicates)
+#     print("new_file_read")
+#     # Get the data for decoded_contracts from BQ
+#     with open(file, 'r') as f:
+#         # Read its contents as a string
+#         contents = f.read()
+
+#     # Split the string into individual objects
+#     objects = contents.split("\n")
+
+#     # Remove any empty objects
+#     objects = [o for o in objects if o]
+
+#     # Add a square bracket at the beginning and end of the file
+#     wrapped = "[" + ",".join(objects) + "]"
+
+#     # Write the JSON data to a new file
+#     with open(file, 'w') as f:
+#         json.dump(json.loads(wrapped), f, indent=4)
+
+#         # Load the JSON data
+#         # print(wrapped)
+    # print(file)
+    with open(file, 'r') as f:
+        data = json.load(f)
+    count = 
+    for row in data:
+        data_object = json.loads(row["data"].replace('"{', "{").replace('}"', "}").replace('\\', ''))
+        print(data_object[0]["address"])
+        # parse JSON string in 'json_column' and replace with actual JSON object
+        # test = json.load(row["data"])
+        # print(test[0]["address"])
+        # address = row["data"]
+        # name = row["sub_name"]
+        # namespace = f"""{row["namespace"]}_ethereum"""
+        # data_list = json.loads(row["data"])
+        # address = data_list[0]["address"]
+        # print(address)
+
+    quit()

@@ -2,8 +2,11 @@ import json
 import os
 import glob
 from google.cloud import bigquery
+from google.cloud.bigquery import job
+from google.cloud import storage
 from query_bigquery import query_bigquery
 from create_dataset import create_dataset
+import pandas as pd
     
 credential_path = "../keys/blocktrekker-admin.json"
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credential_path
@@ -58,6 +61,54 @@ def count_duplicates(current_string, strings_list):
 #     result = {"contract_name" : response.json()['result'][0]['ContractName'], "abi" : response.json()['result'][0]['ABI']}
 #     return result
 
+bigquery_client = bigquery.Client()
+storage_client = storage.Client()
+
+# set configurations
+project_id = 'blocktrekker'
+dataset_id = 'decoded_contracts'
+table_id = 'decode_contracts'
+bucket_name = 'blocktrekker'
+blob_prefix = 'decoded_contracts*.csv'
+
+# set table reference
+table_ref = bigquery_client.dataset(dataset_id).table(table_id)
+
+# set destination uri
+destination_uri = f"gs://{bucket_name}/{blob_prefix}"
+
+# set job configuration
+job_config = bigquery.ExtractJobConfig()
+job_config.destination_format = bigquery.DestinationFormat.CSV
+
+# create extract job
+extract_job = bigquery_client.extract_table(
+    source=table_ref,
+    destination_uris=destination_uri,
+    job_config=job_config
+)
+
+# wait for job to complete
+extract_job.result()
+
+
+# set local directory path
+local_dir_path = 'static_data'
+
+
+# get bucket and blob
+bucket = storage_client.bucket(bucket_name)
+
+# download all blobs with prefix to local directory
+blobs = bucket.list_blobs(prefix='decoded_contracts')
+file_paths = []
+for blob in blobs:
+    # construct local file path
+    local_file_path = os.path.join(local_dir_path, blob.name)
+    file_paths.append(local_file_path)
+    # download blob to local file
+    blob.download_to_filename(local_file_path)
+
 count_5 = 0
 fxn_table = "{{ source('clustered_sources', 'clustered_traces') }}"
 evt_table = "{{ source('clustered_sources', 'clustered_logs') }}"
@@ -66,9 +117,6 @@ project_id = "blocktrekker"
 dataset_id = "spells"
 count1 = 0
 amt = 0
-duplicate_list_evt = []
-duplicate_list_call = []
-query_body_list = []
 estimated_cost = 0
 left_bracket = "{"
 right_bracket = "}"
@@ -102,21 +150,18 @@ schema_dict = {
     "string":"STRING",
     "bytes":"BYTES"} 
 
-file_list = glob.glob('static_data/decoded_eth_contract_*')
-
-for file in file_list: 
+for file in file_paths: 
     print("new_file_read")
     # Get the data for decoded_contracts from BQ
     with open(file) as f:
         data = {}
-        json_data = json.load(f)
+        json_data = json.load(f['data'])
         decoded_contracts = []
         decoded_addresses = []
         decoded_fxs_evts = []
         for ln in json_data:
             decoded_contracts.append(ln)
             decoded_addresses.append(ln["address"])
-
     # Get around the f string \ problem
     new_line = "\n" 
     for contract in decoded_contracts:
@@ -156,30 +201,30 @@ for file in file_list:
             evt_id.full_name = evt["signature"]
             evt_id.evt_hash = evt["evt_hash"]
             evt_id.query_body = f"""
-{left_bracket}{left_bracket}
-config(
-    materialized='view',
-    schema='{namespace}',
-    name='{namespace}',
-)
-{right_bracket}{right_bracket}
-SELECT
-    address as contract_address,
-    {','.join(evt_id.query_lines) + ',' if evt_id.query_lines != [] and evt_id.query_lines != '' else '' }
-    block_number as evt_block_number,
-    block_timestamp as evt_block_time,
-    log_index as evt_index,
-    transaction_hash as evt_tx_hash,
-    transaction_index,
-    evt_hash
-FROM 
-    {evt_table}
-WHERE 
-    evt_hash = '{evt_id.evt_hash}'
-AND 
-    address = '{address}'
-AND 
-    block_timestamp >= '{created_ts}'"""
+    {left_bracket}{left_bracket}
+    config(
+        materialized='view',
+        schema='{namespace}',
+        name='{namespace}',
+    )
+    {right_bracket}{right_bracket}
+    SELECT
+        address as contract_address,
+        {','.join(evt_id.query_lines) + ',' if evt_id.query_lines != [] and evt_id.query_lines != '' else '' }
+        block_number as evt_block_number,
+        block_timestamp as evt_block_time,
+        log_index as evt_index,
+        transaction_hash as evt_tx_hash,
+        transaction_index,
+        evt_hash
+    FROM 
+        {evt_table}
+    WHERE 
+        evt_hash = '{evt_id.evt_hash}'
+    AND 
+        address = '{address}'
+    AND 
+        block_timestamp >= '{created_ts}'"""
                     
             create_dbt_sql_file(evt_id, evt['name'], namespace)
             # estimated_cost = estimated_cost + query_bigquery(evt_id.query_body)
@@ -215,13 +260,13 @@ AND
             call_id.full_name = call["signature"]
             call_id.method_id = call["method_id"]
             call_id.query_body = f"""
-{left_bracket}{left_bracket}
-config(
+    {left_bracket}{left_bracket}
+    config(
     materialized='view',
     schema='blocktrekker',
     name='{namespace}',
-)
-{right_bracket}{right_bracket}
+    )
+    {right_bracket}{right_bracket}
     SELECT 
         {','.join(call_id.query_lines) + ',' if call_id.query_lines != [] and call_id.query_lines != '' else ''}
         transaction_hash as call_tx_hash,
