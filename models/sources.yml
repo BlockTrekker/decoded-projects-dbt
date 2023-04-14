@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: decoded_contracts
+    description: "Decoded Contracts"
+    schema: decoded_contracts
+    tables:
+      - name: dune_abis
+
+  - name: crypto_ethereum_contracts
+    database: bigquery-public-data
+    schema: crypto_ethereum
+    description: "Ethereum Contracts from Public Crypto Dataset"
+    tables:
+      - name: contracts
+        schema: crypto_ethereum
