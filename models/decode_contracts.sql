@@ -8,25 +8,28 @@
 WITH initial as (
   SELECT
     sub_name,
+    address,
     TO_JSON_STRING(
       STRUCT(
-        address,
         name,
         namespace,
         created_ts,
-        signature,
-        type
-      )
-    ) AS data
+        hash_id,
+        type,
+        inputs,
+        outputs
+      )) AS data
   FROM (
     SELECT
       a.address,
       a.name,
       namespace,
       c.block_timestamp AS created_ts,
-      COALESCE(evt.name, call.name) AS sub_name,
-      COALESCE(evt.signature, call.signature) AS signature,
-      CASE WHEN evt.name IS NOT NULL THEN 'event' ELSE 'call' END AS type
+      CONCAT(namespace, "_", COALESCE(evt.name, call.name)) AS sub_name,
+      CASE WHEN evt.name IS NOT NULL THEN 'event' ELSE 'call' END AS type,
+      COALESCE(evt.hash_id, call.hash_id) AS hash_id,
+      COALESCE(evt.inputs, call.inputs) AS inputs,
+      call.outputs AS outputs,
     FROM
       {{ ref('dune_abis') }} a
     LEFT JOIN 
@@ -42,12 +45,14 @@ WITH initial as (
   )
   GROUP BY
     sub_name,
-    data
+    data,
+    address
 )
 
 SELECT 
   sub_name,
+  address as contract_address,
   TO_JSON_STRING(ARRAY_AGG(data)) as data
 FROM initial
-GROUP BY sub_name
+GROUP BY sub_name, address
 ORDER BY sub_name

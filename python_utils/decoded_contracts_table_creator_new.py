@@ -12,10 +12,10 @@ import pandas as pd
 credential_path = "../keys/blocktrekker-admin.json"
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credential_path
 
-# Get the Etherscan API key
-with open('../keys/etherscan_key.json') as f:
-    data = json.load(f)
-    etherscan_api_key = data["key"]
+# # Get the Etherscan API key
+# with open('../keys/etherscan_key.json') as f:
+#     data = json.load(f)
+#     etherscan_api_key = data["key"]
 
 class Contract:
   def __init__(self, address):
@@ -28,7 +28,7 @@ class Event:
     self.contract_address = contract_address
     self.evt_name = evt_name
     self.inputs = inputs
-    self.input_names = []
+    self.input_names = json.load(inputs)
     self.input_types = []
     self.query_lines = []
 
@@ -36,7 +36,7 @@ class Function:
   def __init__(self, contract_address, fx_name, inputs):
     self.contract_address = contract_address
     self.fx_name = fx_name
-    self.inputs = inputs
+    self.inputs = json.load(inputs)
     self.input_names = []
     self.input_types = []
     self.query_lines = []
@@ -159,35 +159,6 @@ estimated_cost = 0
 left_bracket = "{"
 right_bracket = "}"
 
-schema_dict = {
-    "uint32[]":"INT64",
-    "uint16[]":"INT64",
-    "uint8[]":"INT64", 
-    "uint64[]": "INT64",
-    "uint128[]": "INT64",
-    "uint256[]": "BIGNUMERIC",
-    "bool[]":"BOOL",
-    "address[]":"STRING",
-    "string[]":"STRING",
-    "bytes[]":"BYTES",
-    "bytes4":"BYTES",
-    "bytes32":"BYTES",
-    "uint32":"INT64",
-    "uint16":"INT64",
-    "uint8":"INT64", 
-    "uint64": "INT64",
-    "unit80": "INT64",
-    "uint112": "INT64",
-    "uint128": "INT64",
-    "uint168": "BIGNUMERIC",
-    "uint256": "BIGNUMERIC",
-    "BIGNUMERIC": "BIGNUMERIC",
-    "bool":"BOOL",
-    "address":"STRING",
-    "STRING": "STRING",
-    "string":"STRING",
-    "bytes":"BYTES"} 
-
 # open then reformat the json files
 for file in file_list: 
     print("new_file_read")
@@ -222,34 +193,20 @@ for file in file_list:
     for row in wrapped_loaded:
         name = row["sub_name"]
         data = json.loads(row["data"].replace('"{', "{").replace('}"', "}").replace('\\', ''))
-        for contract in data:
+        for table_name in data:
              # parse JSON string in 'json_column' and replace with actual JSON object
-            address = contract["address"]
-            namespace = f"""{contract["namespace"]}_ethereum"""
-            type = contract["type"]
-            signature = contract["signature"]
-            created_ts = contract["created_ts"]
+            name = table_name["name"]
+            address = table_name["address"]
+            namespace = f"""{table_name["namespace"]}_ethereum"""
+            type = table_name["type"]
+            hash_id = table_name["hash_id"]
+            created_ts = table_name["created_ts"]
             # estimated_cost = estimated_cost + create_dataset(dataset_creation_body)
             if type == "event":
-                evt_id = Event(address,row[0],evt["inputs"])
+                evt_id = Event(address,row[0],table_name["inputs"])
                 count = 0
                 for input in evt_id.inputs:
-                    if input["name"] == "":
-                        input["name"] = f"input_{count}"
-                    elif input["name"] == "from":
-                        input["name"] = "from_address"
-                    elif input["name"] == "to":
-                        input["name"] = "to_address"
-                    elif input["name"] == "limit":
-                        input["name"] = "_limit"
-                    elif input["name"] == "all":
-                        input["name"] = "_all"
-                    if input["type"] not in schema_dict:
-                        if input["type"][:4].lower().startswith("uint"):
-                            input["type"] = "BIGNUMERIC"
-                        else:
-                            input["type"] = "STRING"
-                    evt_id.query_lines.append(f"SAFE_CAST(topics[SAFE_OFFSET({count})] as {schema_dict[input['type']]}) as {input['name']}")
+                    evt_id.query_lines.append(f"SAFE_CAST(topics[SAFE_OFFSET({count})] as {input['type']}) as {input['name']}")
                     count = count + 1 
                 evt_id.full_name = evt["signature"]
                 evt_id.evt_hash = evt["evt_hash"]
@@ -282,7 +239,6 @@ for file in file_list:
                 create_dbt_sql_file(evt_id, evt['name'], namespace)
                 # estimated_cost = estimated_cost + query_bigquery(evt_id.query_body)
                 count_5 = count_5 + 1
-                quit()
 
                 if data["type"] == call:
                     call_name = call["name"]
@@ -293,21 +249,6 @@ for file in file_list:
                     call_id = Function(address,call["name"],call["inputs"])
                     count = 0
                     for input in call_id.inputs:
-                        if input["name"] == "":
-                            input["name"] = f"input_{count}"
-                        elif input["name"] == "from":
-                            input["name"] = "from_address"
-                        elif input["name"] == "to":
-                            input["name"] = "to_address"
-                        elif input["name"] == "limit":
-                            input["name"] = "_limit"
-                        elif input["name"] == "all":
-                            input["name"] = "_all"                    
-                        if input["type"] not in schema_dict:
-                            if input["type"][:4].lower().startswith("uint"):
-                                input["type"] = "BIGNUMERIC"
-                            else:
-                                input["type"] = "STRING"
                         call_id.query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * count}, {64}) as {schema_dict[input['type']]}) as {input['name']}")
                         count = count + 1 
                     call_id.full_name = call["signature"]
