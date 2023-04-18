@@ -1,16 +1,15 @@
 import json
-import csv
 import os
 import glob
 from google.cloud import bigquery
-from google.cloud.bigquery import job
-from google.cloud import storage
 from query_bigquery import query_bigquery
 from create_dataset import create_dataset
-import pandas as pd
-import datetime
-import shutil
+import csv
+import sys
+from datetime import datetime
 
+# json.field_size_limit(sys.maxsize)
+    
 credential_path = "../keys/blocktrekker-admin.json"
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credential_path
 
@@ -30,7 +29,7 @@ class Event:
     self.contract_address = contract_address
     self.evt_name = evt_name
     self.inputs = inputs
-    self.input_names = json.load(inputs)
+    self.input_names = []
     self.input_types = []
     self.query_lines = []
 
@@ -38,7 +37,7 @@ class Function:
   def __init__(self, contract_address, fx_name, inputs):
     self.contract_address = contract_address
     self.fx_name = fx_name
-    self.inputs = json.load(inputs)
+    self.inputs = inputs
     self.input_names = []
     self.input_types = []
     self.query_lines = []
@@ -51,97 +50,35 @@ def create_dbt_sql_file(query_body, name, namespace):
         f.write(query_body)
     # print("Created dbt sql file")
 
-def count_duplicates(current_string, strings_list):
-    unique_strings = set(strings_list)
-    count = 0
-    for string in unique_strings:
-        if string == current_string:
-            count += 1
-    return count - 1 if count > 1 else 0
-
 # def query_etherscan(address, etherscan_api_key):
 #     response = requests.get(f"https://api.etherscan.io/api?module=contract&action=getsourcecode&address={address}&apikey={etherscan_api_key}")
 #     result = {"contract_name" : response.json()['result'][0]['ContractName'], "abi" : response.json()['result'][0]['ABI']}
 #     return result
 
-bigquery_client = bigquery.Client()
-storage_client = storage.Client()
-
-# set configurations
-project_id = 'blocktrekker'
-dataset_id = 'decoded_contracts'
-table_id = 'decode_contracts'
-bucket_name = 'blocktrekker'
-blob_prefix = 'decoded_contracts*.csv'
-
-# get bucket and blob
-bucket = storage_client.bucket(bucket_name)
-
-# List all files in the bucket
-blobs = bucket.list_blobs()
-
-# Delete each file in the bucket
-for blob in blobs:
-    blob.delete()
-
-# set table reference
-table_ref = bigquery_client.dataset(dataset_id).table(table_id)
-
-# set destination uri
-destination_uri = f"gs://{bucket_name}/{blob_prefix}"
-
-# set job configuration
-job_config = bigquery.ExtractJobConfig()
-job_config.destination_format = bigquery.DestinationFormat.CSV
-
-# create extract job
-extract_job = bigquery_client.extract_table(
-    source=table_ref,
-    destination_uris=destination_uri,
-    job_config=job_config
-)
-
-# wait for job to complete
-extract_job.result()
-
-
-# set local directory path
-local_dir_path = 'static_data'
-
-if not os.path.exists(local_dir_path):
-    os.makedirs(local_dir_path)
-    print("Directory created successfully")
-else:
-    shutil.rmtree(local_dir_path)
-    os.makedirs(local_dir_path)
-    print("Directory deleted then recreated successfully")
-
-
-# download all blobs with prefix to local directory
-blobs = bucket.list_blobs(prefix='decoded_contracts')
-file_list = []
-for blob in blobs:
-    # only download csv files
-    if blob.name.endswith('.csv'):
-        # construct local file path
-        local_file_path = os.path.join(local_dir_path, blob.name)
-        file_list.append(local_file_path)
-        # download blob to local file
-        blob.download_to_filename(local_file_path)
-    print("new_file_download: {}".format(blob.name))
-
 count_5 = 0
-fxn_table = "{{ source('clustered_sources', 'clustered_traces') }}"
-evt_table = "{{ source('clustered_sources', 'clustered_logs') }}"
+fxn_table = "`clustered_sources.clustered_traces`"
+evt_table = "`clustered_sources.clustered_logs`"
 
 project_id = "blocktrekker"
 dataset_id = "spells"
 count1 = 0
 amt = 0
+query_body_list = []
 estimated_cost = 0
+
+
 left_bracket = "{"
 right_bracket = "}"
 
+file_list = glob.glob('static_data/decoded_contracts*.csv')
+# print(file_list)
+
+# json_string = '["{\"address\":\"0x9d9c46aca6a2c5ff6824a92d521b6381f9f8f1a9\",\"name\":\"MultiSigWalletWithDailyLimit\",\"namespace\":\"foundation\",\"created_ts\":\"2020-05-24T04:33:42Z\",\"signature\":\"MultiSigWalletWithDailyLimit_evt_Confirmation(address,uint256)\",\"type\":\"event\"}","{\"address\":\"0xab4e5b618fb8f1f3503689dfbdf801478ff6c252\",\"name\":\"MultiSigWalletWithDailyLimit\",\"namespace\":\"axieinfinity\",\"created_ts\":\"2020-02-07T18:05:04Z\",\"signature\":\"MultiSigWalletWithDailyLimit_evt_Confirmation(address,uint256)\",\"type\":\"event\"}"]'
+
+# python_object = json.loads(json_string.replace('"{', "{").replace('}"', "}"))
+
+# print(python_object[0]["address"])
+# quit()
 # open then reformat the csv files
 for file in file_list: 
     print("new_file_read")
@@ -159,11 +96,13 @@ for file in file_list:
             output_json = json.loads(f"[{row['outputs']}]")
             contract_details = json.loads(row["contract_details"])
             contract_addresses_sql = []
-            current_min_ts = datetime.datetime.now().timestamp()
-            for contracts in contract_details:
+            current_min_ts = datetime.now().timestamp()
+            for contract in contract_details:
+                contract = json.loads(contract)
+                print(contract["address"])
                 query_lines = []
-                contract_addresses_sql.append(contracts["address"])      
-                current_min_ts =  min(current_min_ts, datetime.strptime(contracts["created_ts"], '%Y-%m-%dT%H:%M:%SZ').timestamp())
+                contract_addresses_sql.append(contract["address"])      
+                current_min_ts =  min(current_min_ts, datetime.strptime(contract["created_ts"], '%Y-%m-%dT%H:%M:%SZ').timestamp())
             if row["type"] == "event":
                 input_count = 0
                 for input in input_json:
