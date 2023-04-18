@@ -41,12 +41,12 @@ class Function:
     self.input_types = []
     self.query_lines = []
 
-def create_dbt_sql_file(evt_id, name, namespace):
+def create_dbt_sql_file(query_body, name, namespace):
     # Create the directory
     os.makedirs(f"""models/{namespace}""", exist_ok=True)
     # Create the dbt sql file
     with open(f"""models/{namespace}/{name}.sql""", "w") as f:
-        f.write(evt_id.query_body)
+        f.write(query_body)
     # print("Created dbt sql file")
 
 def count_duplicates(current_string, strings_list):
@@ -80,7 +80,7 @@ destination_uri = f"gs://{bucket_name}/{blob_prefix}"
 
 # set job configuration
 job_config = bigquery.ExtractJobConfig()
-job_config.destination_format = bigquery.DestinationFormat.NEWLINE_DELIMITED_JSON
+job_config.destination_format = bigquery.DestinationFormat.CSV
 
 # create extract job
 extract_job = bigquery_client.extract_table(
@@ -96,6 +96,12 @@ extract_job.result()
 # set local directory path
 local_dir_path = 'static_data'
 
+if not os.path.exists(local_dir_path):
+    os.makedirs(local_dir_path)
+    print("Directory created successfully")
+else:
+    print("Directory already exists")
+
 
 # get bucket and blob
 bucket = storage_client.bucket(bucket_name)
@@ -104,8 +110,8 @@ bucket = storage_client.bucket(bucket_name)
 blobs = bucket.list_blobs(prefix='decoded_contracts')
 file_list = []
 for blob in blobs:
-    # only download json files
-    if blob.name.endswith('.json'):
+    # only download csv files
+    if blob.name.endswith('.csv'):
         # construct local file path
         local_file_path = os.path.join(local_dir_path, blob.name)
         file_list.append(local_file_path)
@@ -113,40 +119,6 @@ for blob in blobs:
         blob.download_to_filename(local_file_path)
     print("new_file_download: {}".format(blob.name))
 
-# open then reformat the json files
-for file in file_list: 
-    print("new_file_read")
-    # Get the data for decoded_contracts from BQ
-    with open(file, 'r') as f:
-        # Read its contents as a string
-        contents = f.read()
-
-    # Split the string into individual objects
-    objects = contents.split("\n")
-    new_objects = []
-
-        # Remove any empty objects
-    objects = [o for o in objects if o]
-
-    # # remove all square brackets in data objects
-    # for object in objects:
-    #     sub_object = json.loads(object)
-    #     sub_object["data"] = sub_object["data"][1:-1]
-    #     new_objects.append(json.dumps(sub_object))
-
-    # Add a square bracket at the beginning and end of the file
-    wrapped = "[" + ",".join(objects) + "]"
-
-    # load wrapped
-    wrapped_loaded = json.loads(wrapped)
-
-    # Write the JSON data to a new file
-    with open(file, 'w') as f:
-        json.dump(json.loads(wrapped), f, indent=4)
-    
-    for row in wrapped_loaded:
-        data_object = json.loads(row["data"].replace('"{', "{").replace('}"', "}").replace('\\', ''))
-        print(data_object[0]["address"])
 count_5 = 0
 fxn_table = "{{ source('clustered_sources', 'clustered_traces') }}"
 evt_table = "{{ source('clustered_sources', 'clustered_logs') }}"
@@ -165,127 +137,103 @@ for file in file_list:
     # Get the data for decoded_contracts from BQ
     with open(file, 'r') as f:
         # Read its contents as a string
-        contents = f.read()
+        csv_reader = csv.DictReader(f)
 
-    # Split the string into individual objects
-    objects = contents.split("\n")
-    new_objects = []
-
-        # Remove any empty objects
-    objects = [o for o in objects if o]
-
-    # # remove all square brackets in data objects
-    # for object in objects:
-    #     sub_object = json.loads(object)
-    #     sub_object["data"] = sub_object["data"][1:-1]
-    #     new_objects.append(json.dumps(sub_object))
-
-    # Add a square bracket at the beginning and end of the file
-    wrapped = "[" + ",".join(objects) + "]"
-
-    # load wrapped
-    wrapped_loaded = json.loads(wrapped)
-
-    # Write the JSON data to a new file
-    with open(file, 'w') as f:
-        json.dump(json.loads(wrapped), f, indent=4)        
-
-    for row in wrapped_loaded:
-        name = row["sub_name"]
-        data = json.loads(row["data"].replace('"{', "{").replace('}"', "}").replace('\\', ''))
-        for table_name in data:
-             # parse JSON string in 'json_column' and replace with actual JSON object
-            name = table_name["name"]
-            address = table_name["address"]
-            namespace = f"""{table_name["namespace"]}_ethereum"""
-            type = table_name["type"]
-            hash_id = table_name["hash_id"]
-            created_ts = table_name["created_ts"]
-            # estimated_cost = estimated_cost + create_dataset(dataset_creation_body)
-            if type == "event":
-                evt_id = Event(address,row[0],table_name["inputs"])
-                count = 0
-                for input in evt_id.inputs:
-                    evt_id.query_lines.append(f"SAFE_CAST(topics[SAFE_OFFSET({count})] as {input['type']}) as {input['name']}")
-                    count = count + 1 
-                evt_id.full_name = evt["signature"]
-                evt_id.evt_hash = evt["evt_hash"]
-                evt_id.query_body = f"""
-    {left_bracket}{left_bracket}
-    config(
-        materialized='view',
-        schema='{namespace}',
-        name='{namespace}',
-    )
-    {right_bracket}{right_bracket}
-    SELECT
-        address as contract_address,
-        {','.join(evt_id.query_lines) + ',' if evt_id.query_lines != [] and evt_id.query_lines != '' else '' }
-        block_number as evt_block_number,
-        block_timestamp as evt_block_time,
-        log_index as evt_index,
-        transaction_hash as evt_tx_hash,
-        transaction_index,
-        evt_hash
-    FROM 
-        {evt_table}
-    WHERE 
-        evt_hash = '{evt_id.evt_hash}'
-    AND 
-        address = '{address}'
-    AND 
-        block_timestamp >= '{created_ts}'"""
-                            
-                create_dbt_sql_file(evt_id, evt['name'], namespace)
+    for row in csv_reader:
+        table_name = row["sub_name"]
+        name_space = row["name_space"]
+        type = row["type"]
+        hash_id = row["hash_id"]
+        input_json = json.load(row["inputs"])
+        output_json = json.load(row["outputs"])
+        contract_details = json.load(row["contract_details"])
+        contract_addresses_sql = []
+        current_min_ts = 2723827000. #some arbitrarily new number
+        for contracts in contract_details:
+            query_lines = []
+            contract_addresses_sql.append(contracts["address"])
+            current_min_ts =  min(current_min_ts, contracts["created_ts"])
+        if row["type"] == "event":
+            input_count = 0
+            for inputs in input_json:
+                query_lines.append(f"SAFE_CAST(topics[SAFE_OFFSET({input_count})] as {input['type']}) as {input['name']}")
+                input_count = input_count + 1
+            query_body = f"""
+{left_bracket}{left_bracket}
+config(
+    materialized='view',
+    schema='{name_space}',
+    name='{name_space}',
+)
+{right_bracket}{right_bracket}
+SELECT
+    address as contract_address,
+    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else '' }
+    block_number as evt_block_number,
+    block_timestamp as evt_block_time,
+    log_index as evt_index,
+    transaction_hash as evt_tx_hash,
+    transaction_index,
+    evt_hash
+FROM 
+    {evt_table}
+WHERE 
+    evt_hash = '{hash_id}'
+AND 
+    address IN [{','.join(contract_addresses_sql)}]
+AND 
+    block_timestamp >= '{current_min_ts}'"""
+                        
+            create_dbt_sql_file(query_body, table_name, name_space)
                 # estimated_cost = estimated_cost + query_bigquery(evt_id.query_body)
-                count_5 = count_5 + 1
+            count_5 = count_5 + 1
+            quit()
 
-                if data["type"] == call:
-                    call_name = call["name"]
-                    duplicate_list_call.append(call_name)
-                    duplicate_number = count_duplicates(call["name"],duplicate_list_call)
-                    if duplicate_number > 0:
-                        call["name"] = f"{call['name']}_{str(duplicate_number)}"
-                    call_id = Function(address,call["name"],call["inputs"])
-                    count = 0
-                    for input in call_id.inputs:
-                        call_id.query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * count}, {64}) as {schema_dict[input['type']]}) as {input['name']}")
-                        count = count + 1 
-                    call_id.full_name = call["signature"]
-                    call_id.method_id = call["method_id"]
-                    call_id.query_body = f"""
-            {left_bracket}{left_bracket}
-            config(
-            materialized='view',
-            schema='blocktrekker',
-            name='{namespace}',
-            )
-            {right_bracket}{right_bracket}
-            SELECT 
-                {','.join(call_id.query_lines) + ',' if call_id.query_lines != [] and call_id.query_lines != '' else ''}
-                transaction_hash as call_tx_hash,
-                to_address as contract_address,
-                output as output_0,
-                block_number as call_block_number,
-                block_timestamp as call_block_time,
-                status as call_success,
-                trace_address as call_trace_address,
-                trace_id as call_trace_id,
-                error as call_error,
-                trace_type as call_trace_type,
-                from_address as trace_from_address,
-                value as trace_value,
-                method_id
-            FROM 
-                {fxn_table}
-            WHERE 
-                LEFT(input,10) = '{call_id.method_id}'
-            AND 
-                to_address = '{address}'
-            AND 
-                block_timestamp >= '{created_ts}'"""
-                    create_dbt_sql_file(call_id, call['name'], namespace)
-                    count_5 = count_5 + 1
+        if row["type"] == "call":
+            input_count = 0
+            output_count = 0
+            query_lines = []
+            output_query_sql = []
+            for input in input_json:
+                query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * input_count}, {64}) as {input['type']}) as {input['name']}")
+                count = count + 1 
+            for output in output_json:
+                output_query_sql.append(f"SAFE_CAST(SUBSTRING(output, {11 + 64 * output_count}, {64}) as {output['type']}) as {output['name']}")
+            method_id = hash_id
+            query_body = f"""
+{left_bracket}{left_bracket}
+config(
+materialized='view',
+schema='blocktrekker',
+name='{name_space}',
+)
+{right_bracket}{right_bracket}
+SELECT 
+    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else ''}
+    transaction_hash as call_tx_hash,
+    to_address as contract_address,
+    output as output_0,
+    block_number as call_block_number,
+    block_timestamp as call_block_time,
+    status as call_success,
+    trace_address as call_trace_address,
+    trace_id as call_trace_id,
+    error as call_error,
+    trace_type as call_trace_type,
+    from_address as trace_from_address,
+    value as trace_value,
+    method_id
+FROM 
+    {fxn_table}
+WHERE 
+    LEFT(input,10) = '{method_id}'
+AND 
+    to_address IN [{','.join(contract_addresses_sql)}]
+AND 
+    block_timestamp >= '{current_min_ts}'"""
+                
+            create_dbt_sql_file(query_body, table_name, name_space)
+            count_5 = count_5 + 1
 
 
     # print(f"total:{estimated_cost}`
