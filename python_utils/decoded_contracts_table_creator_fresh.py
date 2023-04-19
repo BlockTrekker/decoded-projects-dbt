@@ -114,7 +114,7 @@ if not os.path.exists(local_dir_path):
 else:
     shutil.rmtree(local_dir_path)
     os.makedirs(local_dir_path)
-    print("Directory deleted then recreated successfully")
+    print("Directory (static_directory) deleted then recreated successfully")
 
 
 # download all blobs with prefix to local directory
@@ -156,34 +156,42 @@ for file in file_list:
         table_name = row["sub_name"]
         name_space = f"{row['namespace']}_ethereum"
         type = row["type"]
-        hash_ids = row["hash_ids"]
-        if row['inputs']:
+        hash_ids = row["hash_ids"][1:-1]
+
+        if row['inputs_']:
             try:
-                input_json = json.loads(f"[{row['inputs']}]")
+                if row['inputs_'] == "[null]":
+                    input_json = []
+                else:
+                    input_json_array = json.loads(f'[{json.loads(row["inputs_"])[0]}]')
             except json.decoder.JSONDecodeError as e:
-                input_json = ''
+                print(e)
+                print("input: "f'[{json.loads(row["inputs_"])[0]}]')
+                input_json_array = []
         else:
-            output_json = ''
+            input_json_array = []
         if row['outputs']:
             try:
-                output_json = json.loads(f"[{row['outputs']}]")
+                if row['outputs'] == "[null]" or row['outputs'] == '[""]':
+                    output_json_array = []
+                else:
+                    output_json_array = json.loads(f'[{json.loads(row["outputs"])[0]}]')
             except json.decoder.JSONDecodeError as e:
-                output_json = ''
+                print(e)
+                print("output: "f'[{json.loads(row["outputs"])[0]}]')
+                output_json_array = []
         else:
-            output_json = ''
-        contract_addresses = row['contract_addresses']
+            output_json_array = []
+        contract_addresses = row['contract_addresses'][1:-1]
         current_min_ts = row['min_created_ts']
-        contract_addresses_sql = []
         if row["type"] == "event":
             query_lines = []
             input_count = 0
-            for input in input_json:
-                input = json.loads(input)
+            for input_ in input_json_array:
                 try:
-                    name = input['name']
-                except KeyError:
-                    input['name'] = f"_{input_count}"
-                query_lines.append(f"SAFE_CAST(topics[SAFE_OFFSET({input_count})] as {input['type']}) as {input['name']}")
+                    query_lines.append(f"SAFE_CAST(topics[SAFE_OFFSET({input_count})] as {input_['type']}) as {input_['name']}")
+                except KeyError as e:
+                    query_lines.append(f"SAFE_CAST(topics[SAFE_OFFSET({input_count})] as {input_['type']}) as input_{input_count}")
                 input_count = input_count + 1
             query_body = f"""
 {left_bracket}{left_bracket}
@@ -205,36 +213,27 @@ SELECT
 FROM 
     {evt_table}
 WHERE 
-    evt_hash in ('{','.join(hash_ids.split(","))}')
+    evt_hash in ({hash_ids})
 AND 
-    address IN ("{','.join(contract_addresses_sql)}")
+    address IN ({contract_addresses})
 AND 
-    block_timestamp >= '{datetime.fromtimestamp(current_min_ts)}'"""
+    block_timestamp >= '{current_min_ts}'"""
                         
-        # create_dbt_sql_file(query_body, table_name, name_space)
-            # estimated_cost = estimated_cost + query_bigquery(evt_id.query_body)
-        count_5 = count_5 + 1
+            create_dbt_sql_file(query_body, table_name, name_space)
+            count_5 = count_5 + 1
     
         if row["type"] == "call":
             input_count = 0
             output_count = 0
             query_lines = []
             output_query_sql = []
-            for input in input_json:
-                input = json.loads(input)
-                try:
-                    name = input['name']
-                except KeyError:
-                    input['name'] = f"_{input_count}"
-                query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * input_count}, {64}) as {input['type']}) as {input['name']}")
-                input_count = input_count + 1 
-                
-            for output in output_json:
-                output = json.loads(output)
-                try:
-                    name = output['name']
-                except KeyError:
-                    output['name'] = f"_{output_count}"
+            for input_ in input_json_array:
+                try:        
+                    query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * input_count}, {64}) as {input_['type']}) as {input_['name']}")
+                except KeyError as e:
+                    query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * input_count}, {64}) as {input_['type']}) as input_{input_count}")
+                input_count = input_count + 1
+            for output in output_json_array:
                 output_query_sql.append(f"SAFE_CAST(SUBSTRING(output, {64 * output_count}, {64}) as {output['type']}) as {output['name']}")
                 output_count = output_count + 1
             query_body = f"""
@@ -263,16 +262,15 @@ SELECT
 FROM 
     {fxn_table}
 WHERE 
-    LEFT(input,10) in ('{','.join(hash_ids.split(","))}')
+    LEFT(input,10) in ({hash_ids})
 AND 
-    to_address IN ({','.join(contract_addresses_sql)})
+    to_address IN ({contract_addresses})
 AND 
-    block_timestamp >= '{datetime.fromtimestamp(current_min_ts)}'"""
+    block_timestamp >= '{current_min_ts}'"""
                 
-            # create_dbt_sql_file(query_body, table_name, name_space)
+            create_dbt_sql_file(query_body, table_name, name_space)
             count_5 = count_5 + 1
             print(count_5)
                 
-
 print(count_5)
 print(f"total:{estimated_cost}")

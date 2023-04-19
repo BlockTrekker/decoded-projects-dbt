@@ -17,6 +17,14 @@ sources:
       - name: abi_to_ordinal_dune
       - name: address_to_ordinal_dune  
 
+  - name: clustered_sources
+    description: "clustered_sources for logs and calls"
+    schema: clustered_sources
+    tables:
+      - name: clustered_logs
+      - name: clustered_traces
+      - name: address_to_ordinal_dune  
+
   - name: crypto_ethereum_contracts
     database: bigquery-public-data
     schema: crypto_ethereum
