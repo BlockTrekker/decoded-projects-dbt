@@ -1,4 +1,5 @@
 import json
+import csv
 import os
 import glob
 from google.cloud import bigquery
@@ -7,14 +8,16 @@ from google.cloud import storage
 from query_bigquery import query_bigquery
 from create_dataset import create_dataset
 import pandas as pd
-    
+import datetime
+import shutil
+
 credential_path = "../keys/blocktrekker-admin.json"
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credential_path
 
-# Get the Etherscan API key
-with open('../keys/etherscan_key.json') as f:
-    data = json.load(f)
-    etherscan_api_key = data["key"]
+# # Get the Etherscan API key
+# with open('../keys/etherscan_key.json') as f:
+#     data = json.load(f)
+#     etherscan_api_key = data["key"]
 
 class Contract:
   def __init__(self, address):
@@ -27,7 +30,7 @@ class Event:
     self.contract_address = contract_address
     self.evt_name = evt_name
     self.inputs = inputs
-    self.input_names = []
+    self.input_names = json.load(inputs)
     self.input_types = []
     self.query_lines = []
 
@@ -35,17 +38,17 @@ class Function:
   def __init__(self, contract_address, fx_name, inputs):
     self.contract_address = contract_address
     self.fx_name = fx_name
-    self.inputs = inputs
+    self.inputs = json.load(inputs)
     self.input_names = []
     self.input_types = []
     self.query_lines = []
 
-def create_dbt_sql_file(evt_id, name, namespace):
+def create_dbt_sql_file(query_body, name, namespace):
     # Create the directory
     os.makedirs(f"""models/{namespace}""", exist_ok=True)
     # Create the dbt sql file
     with open(f"""models/{namespace}/{name}.sql""", "w") as f:
-        f.write(evt_id.query_body)
+        f.write(query_body)
     # print("Created dbt sql file")
 
 def count_duplicates(current_string, strings_list):
@@ -71,6 +74,16 @@ table_id = 'decode_contracts'
 bucket_name = 'blocktrekker'
 blob_prefix = 'decoded_contracts*.csv'
 
+# get bucket and blob
+bucket = storage_client.bucket(bucket_name)
+
+# List all files in the bucket
+blobs = bucket.list_blobs()
+
+# Delete each file in the bucket
+for blob in blobs:
+    blob.delete()
+
 # set table reference
 table_ref = bigquery_client.dataset(dataset_id).table(table_id)
 
@@ -95,19 +108,27 @@ extract_job.result()
 # set local directory path
 local_dir_path = 'static_data'
 
+if not os.path.exists(local_dir_path):
+    os.makedirs(local_dir_path)
+    print("Directory created successfully")
+else:
+    shutil.rmtree(local_dir_path)
+    os.makedirs(local_dir_path)
+    print("Directory deleted then recreated successfully")
 
-# get bucket and blob
-bucket = storage_client.bucket(bucket_name)
 
 # download all blobs with prefix to local directory
 blobs = bucket.list_blobs(prefix='decoded_contracts')
-file_paths = []
+file_list = []
 for blob in blobs:
-    # construct local file path
-    local_file_path = os.path.join(local_dir_path, blob.name)
-    file_paths.append(local_file_path)
-    # download blob to local file
-    blob.download_to_filename(local_file_path)
+    # only download csv files
+    if blob.name.endswith('.csv'):
+        # construct local file path
+        local_file_path = os.path.join(local_dir_path, blob.name)
+        file_list.append(local_file_path)
+        # download blob to local file
+        blob.download_to_filename(local_file_path)
+    print("new_file_download: {}".format(blob.name))
 
 count_5 = 0
 fxn_table = "{{ source('clustered_sources', 'clustered_traces') }}"
@@ -121,179 +142,137 @@ estimated_cost = 0
 left_bracket = "{"
 right_bracket = "}"
 
-schema_dict = {
-    "uint32[]":"INT64",
-    "uint16[]":"INT64",
-    "uint8[]":"INT64", 
-    "uint64[]": "INT64",
-    "uint128[]": "INT64",
-    "uint256[]": "BIGNUMERIC",
-    "bool[]":"BOOL",
-    "address[]":"STRING",
-    "string[]":"STRING",
-    "bytes[]":"BYTES",
-    "bytes4":"BYTES",
-    "bytes32":"BYTES",
-    "uint32":"INT64",
-    "uint16":"INT64",
-    "uint8":"INT64", 
-    "uint64": "INT64",
-    "unit80": "INT64",
-    "uint112": "INT64",
-    "uint128": "INT64",
-    "uint168": "BIGNUMERIC",
-    "uint256": "BIGNUMERIC",
-    "BIGNUMERIC": "BIGNUMERIC",
-    "bool":"BOOL",
-    "address":"STRING",
-    "STRING": "STRING",
-    "string":"STRING",
-    "bytes":"BYTES"} 
-
-for file in file_paths: 
+# open then reformat the csv files
+for file in file_list: 
+    dfs = []
     print("new_file_read")
     # Get the data for decoded_contracts from BQ
-    with open(file) as f:
-        data = {}
-        json_data = json.load(f['data'])
-        decoded_contracts = []
-        decoded_addresses = []
-        decoded_fxs_evts = []
-        for ln in json_data:
-            decoded_contracts.append(ln)
-            decoded_addresses.append(ln["address"])
-    # Get around the f string \ problem
-    new_line = "\n" 
-    for contract in decoded_contracts:
-        address = contract["address"]
-        name = contract["name"]
-        namespace = f"""{contract["namespace"]}_ethereum"""
-        # namespace = "spells"
-        created_ts = contract["created_ts"]
-        # estimated_cost = estimated_cost + create_dataset(dataset_creation_body)
+    # with open(file, 'r') as f:
+        # Read its contents as a string
 
-        for evt in contract["evts"]:
-            evt_name = evt["name"]
-            duplicate_number = count_duplicates(evt["name"],duplicate_list_evt)
-            duplicate_list_evt.append(evt_name)
-            if duplicate_number > 0:
-                evt["name"] = f"{evt['name']}_{str(duplicate_number)}"
-            evt_id = Event(address,evt["name"],evt["inputs"])
-            count = 0
-            for input in evt_id.inputs:
-                if input["name"] == "":
-                    input["name"] = f"input_{count}"
-                elif input["name"] == "from":
-                    input["name"] = "from_address"
-                elif input["name"] == "to":
-                    input["name"] = "to_address"
-                elif input["name"] == "limit":
-                    input["name"] = "_limit"
-                elif input["name"] == "all":
-                    input["name"] = "_all"
-                if input["type"] not in schema_dict:
-                    if input["type"][:4].lower().startswith("uint"):
-                        input["type"] = "BIGNUMERIC"
-                    else:
-                        input["type"] = "STRING"
-                evt_id.query_lines.append(f"SAFE_CAST(topics[SAFE_OFFSET({count})] as {schema_dict[input['type']]}) as {input['name']}")
-                count = count + 1 
-            evt_id.full_name = evt["signature"]
-            evt_id.evt_hash = evt["evt_hash"]
-            evt_id.query_body = f"""
-    {left_bracket}{left_bracket}
-    config(
-        materialized='view',
-        schema='{namespace}',
-        name='{namespace}',
-    )
-    {right_bracket}{right_bracket}
-    SELECT
-        address as contract_address,
-        {','.join(evt_id.query_lines) + ',' if evt_id.query_lines != [] and evt_id.query_lines != '' else '' }
-        block_number as evt_block_number,
-        block_timestamp as evt_block_time,
-        log_index as evt_index,
-        transaction_hash as evt_tx_hash,
-        transaction_index,
-        evt_hash
-    FROM 
-        {evt_table}
-    WHERE 
-        evt_hash = '{evt_id.evt_hash}'
-    AND 
-        address = '{address}'
-    AND 
-        block_timestamp >= '{created_ts}'"""
-                    
-            create_dbt_sql_file(evt_id, evt['name'], namespace)
-            # estimated_cost = estimated_cost + query_bigquery(evt_id.query_body)
-            count_5 = count_5 + 1
-            quit()
-
-        for call in contract["calls"]:
-            call_name = call["name"]
-            duplicate_list_call.append(call_name)
-            duplicate_number = count_duplicates(call["name"],duplicate_list_call)
-            if duplicate_number > 0:
-                call["name"] = f"{call['name']}_{str(duplicate_number)}"
-            call_id = Function(address,call["name"],call["inputs"])
-            count = 0
-            for input in call_id.inputs:
-                if input["name"] == "":
-                    input["name"] = f"input_{count}"
-                elif input["name"] == "from":
-                    input["name"] = "from_address"
-                elif input["name"] == "to":
-                    input["name"] = "to_address"
-                elif input["name"] == "limit":
-                    input["name"] = "_limit"
-                elif input["name"] == "all":
-                    input["name"] = "_all"                    
-                if input["type"] not in schema_dict:
-                    if input["type"][:4].lower().startswith("uint"):
-                        input["type"] = "BIGNUMERIC"
-                    else:
-                        input["type"] = "STRING"
-                call_id.query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * count}, {64}) as {schema_dict[input['type']]}) as {input['name']}")
-                count = count + 1 
-            call_id.full_name = call["signature"]
-            call_id.method_id = call["method_id"]
-            call_id.query_body = f"""
-    {left_bracket}{left_bracket}
-    config(
+    csv_reader = pd.read_csv(file, delimiter=',', low_memory=False)
+    
+    for index, row in csv_reader.iterrows():
+        table_name = row["sub_name"]
+        name_space = f"{row['namespace']}_ethereum"
+        type = row["type"]
+        hash_ids = row["hash_ids"]
+        if row['inputs']:
+            try:
+                input_json = json.loads(f"[{row['inputs']}]")
+            except json.decoder.JSONDecodeError as e:
+                input_json = ''
+        else:
+            output_json = ''
+        if row['outputs']:
+            try:
+                output_json = json.loads(f"[{row['outputs']}]")
+            except json.decoder.JSONDecodeError as e:
+                output_json = ''
+        else:
+            output_json = ''
+        contract_addresses = row['contract_addresses']
+        current_min_ts = row['min_created_ts']
+        contract_addresses_sql = []
+        if row["type"] == "event":
+            query_lines = []
+            input_count = 0
+            for input in input_json:
+                input = json.loads(input)
+                try:
+                    name = input['name']
+                except KeyError:
+                    input['name'] = f"_{input_count}"
+                query_lines.append(f"SAFE_CAST(topics[SAFE_OFFSET({input_count})] as {input['type']}) as {input['name']}")
+                input_count = input_count + 1
+            query_body = f"""
+{left_bracket}{left_bracket}
+config(
     materialized='view',
-    schema='blocktrekker',
-    name='{namespace}',
-    )
-    {right_bracket}{right_bracket}
-    SELECT 
-        {','.join(call_id.query_lines) + ',' if call_id.query_lines != [] and call_id.query_lines != '' else ''}
-        transaction_hash as call_tx_hash,
-        to_address as contract_address,
-        output as output_0,
-        block_number as call_block_number,
-        block_timestamp as call_block_time,
-        status as call_success,
-        trace_address as call_trace_address,
-        trace_id as call_trace_id,
-        error as call_error,
-        trace_type as call_trace_type,
-        from_address as trace_from_address,
-        value as trace_value,
-        method_id
-    FROM 
-        {fxn_table}
-    WHERE 
-        LEFT(input,10) = '{call_id.method_id}'
-    AND 
-        to_address = '{address}'
-    AND 
-        block_timestamp >= '{created_ts}'"""
-            create_dbt_sql_file(call_id, call['name'], namespace)
+    schema='{name_space}',
+    name='{name_space}',
+)
+{right_bracket}{right_bracket}
+SELECT
+    address as contract_address,
+    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else '' }
+    block_number as evt_block_number,
+    block_timestamp as evt_block_time,
+    log_index as evt_index,
+    transaction_hash as evt_tx_hash,
+    transaction_index,
+    evt_hash
+FROM 
+    {evt_table}
+WHERE 
+    evt_hash in ('{','.join(hash_ids.split(","))}')
+AND 
+    address IN ("{','.join(contract_addresses_sql)}")
+AND 
+    block_timestamp >= '{datetime.fromtimestamp(current_min_ts)}'"""
+                        
+        # create_dbt_sql_file(query_body, table_name, name_space)
+            # estimated_cost = estimated_cost + query_bigquery(evt_id.query_body)
+        count_5 = count_5 + 1
+    
+        if row["type"] == "call":
+            input_count = 0
+            output_count = 0
+            query_lines = []
+            output_query_sql = []
+            for input in input_json:
+                input = json.loads(input)
+                try:
+                    name = input['name']
+                except KeyError:
+                    input['name'] = f"_{input_count}"
+                query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * input_count}, {64}) as {input['type']}) as {input['name']}")
+                input_count = input_count + 1 
+                
+            for output in output_json:
+                output = json.loads(output)
+                try:
+                    name = output['name']
+                except KeyError:
+                    output['name'] = f"_{output_count}"
+                output_query_sql.append(f"SAFE_CAST(SUBSTRING(output, {64 * output_count}, {64}) as {output['type']}) as {output['name']}")
+                output_count = output_count + 1
+            query_body = f"""
+{left_bracket}{left_bracket}
+config(
+materialized='view',
+schema='blocktrekker',
+name='{name_space}',
+)
+{right_bracket}{right_bracket}
+SELECT 
+    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else ''}
+    transaction_hash as call_tx_hash,
+    to_address as contract_address,
+    output as output_0,
+    block_number as call_block_number,
+    block_timestamp as call_block_time,
+    status as call_success,
+    trace_address as call_trace_address,
+    trace_id as call_trace_id,
+    error as call_error,
+    trace_type as call_trace_type,
+    from_address as trace_from_address,
+    value as trace_value,
+    method_id
+FROM 
+    {fxn_table}
+WHERE 
+    LEFT(input,10) in ('{','.join(hash_ids.split(","))}')
+AND 
+    to_address IN ({','.join(contract_addresses_sql)})
+AND 
+    block_timestamp >= '{datetime.fromtimestamp(current_min_ts)}'"""
+                
+            # create_dbt_sql_file(query_body, table_name, name_space)
             count_5 = count_5 + 1
-
-
+            print(count_5)
+                
 
 print(count_5)
 print(f"total:{estimated_cost}")
