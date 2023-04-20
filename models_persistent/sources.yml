@@ -6,8 +6,7 @@ sources:
     schema: decoded_contracts
     tables:
       - name: dune_abis
-      - name: abi_to_ordinal_dune
-      - name: address_to_ordinal_dune
+      - name: decode_contracts
 
   - name: decoded_projects
     description: "Decoded Projects"

@@ -20,7 +20,7 @@ blocktrekker_admin:
       ### database-specific connection details
       keyfile: ../keys/blocktrekker-admin.json
       threads: 32
-      project: blocktrekker
+      project: awesome-web3
       schema: decoded_projects
       timeout_seconds: 2000
       location: US

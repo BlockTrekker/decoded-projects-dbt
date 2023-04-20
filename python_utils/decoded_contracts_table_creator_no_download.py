@@ -8,6 +8,7 @@ import csv
 import sys
 from datetime import datetime
 import pandas as pd
+import math
 
 # json.field_size_limit(sys.maxsize)
     
@@ -47,20 +48,17 @@ class Function:
 
 def create_dbt_sql_file(query_body, name, namespace):
     # Create the directory
-    os.makedirs(f"""models/{namespace}""", exist_ok=True)
+    model_num = model_num = math.floor(count_5/2500)
+    os.makedirs(f"""models_{model_num}/{namespace}""", exist_ok=True)
     # Create the dbt sql file
-    with open(f"""models/{namespace}/{name}.sql""", "w") as f:
+    with open(f"""models_{model_num}/{namespace}/{name}.sql""", "w") as f:
         f.write(query_body)
     # print("Created dbt sql file")
 
-# def query_etherscan(address, etherscan_api_key):
-#     response = requests.get(f"https://api.etherscan.io/api?module=contract&action=getsourcecode&address={address}&apikey={etherscan_api_key}")
-#     result = {"contract_name" : response.json()['result'][0]['ContractName'], "abi" : response.json()['result'][0]['ABI']}
-#     return result
 
 count_5 = 0
-fxn_table = "`clustered_sources.clustered_traces`"
-evt_table = "`clustered_sources.clustered_logs`"
+fxn_table = "{{ source('clustered_sources', 'clustered_traces') }}"
+evt_table = "{{ source('clustered_sources', 'clustered_logs') }}"
 
 project_id = "blocktrekker"
 dataset_id = "spells"
@@ -86,10 +84,10 @@ for file in file_list:
     csv_reader = pd.read_csv(file, delimiter=',', low_memory=False)
     
     for index, row in csv_reader.iterrows():
-        table_name = row["sub_name"]
+        table_name = row["sub_name"].replace(".", "_").replace("++", "")
         name_space = f"{row['namespace']}_ethereum"
         type = row["type"]
-        hash_ids = row["hash_ids"]
+        hash_ids = row["hash_ids"][1:-1]
 
         if row['inputs_']:
             try:
@@ -121,7 +119,10 @@ for file in file_list:
             query_lines = []
             input_count = 0
             for input_ in input_json_array:
-                query_lines.append(f"SAFE_CAST(topics[SAFE_OFFSET({input_count})] as {input_['type']}) as {input_['name']}")
+                try:
+                    query_lines.append(f"SAFE_CAST(topics[SAFE_OFFSET({input_count})] as {input_['type']}) as `{input_['name'].replace('_partition', 'partition')}`")
+                except KeyError as e:
+                    query_lines.append(f"SAFE_CAST(topics[SAFE_OFFSET({input_count})] as {input_['type']}) as input_{input_count}")
                 input_count = input_count + 1
             query_body = f"""
 {left_bracket}{left_bracket}
@@ -143,14 +144,51 @@ SELECT
 FROM 
     {evt_table}
 WHERE 
-    evt_hash in ('{','.join(hash_ids.split(","))}')
+    evt_hash in ({hash_ids})
 AND 
     address IN ({contract_addresses})
 AND 
     block_timestamp >= '{current_min_ts}'"""
                         
-            # create_dbt_sql_file(query_body, table_name, name_space)
-            print(query_body)
+            # Big Query has a 256k character limit on queries, which we trigger with large contract address lists
+            # To get around this, we get an address list CTE and call that into the query 
+            if len(query_body) > 250000:
+                query_body = f"""
+{left_bracket}{left_bracket}
+config(
+    materialized='view',
+    schema='{name_space}',
+    name='{name_space}',
+)
+{right_bracket}{right_bracket}
+WITH contract_addresses AS (
+    SELECT
+        TRIM(array_element, "[]") as contract_address
+    FROM 
+        {left_bracket}{left_bracket} source('decoded_contracts', 'decode_contracts') {right_bracket}{right_bracket}, 
+        UNNEST(SPLIT(contract_addresses, ',')) AS array_element
+    WHERE
+        sub_name = '{table_name}'
+)
+
+SELECT
+    address as contract_address,
+    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else '' }
+    block_number as evt_block_number,
+    block_timestamp as evt_block_time,
+    log_index as evt_index,
+    transaction_hash as evt_tx_hash,
+    transaction_index,
+    evt_hash
+FROM 
+    {evt_table}
+WHERE 
+    evt_hash in ({hash_ids})
+AND 
+    address IN (SELECT * FROM contract_addresses)
+AND 
+    block_timestamp >= '{current_min_ts}'"""
+            create_dbt_sql_file(query_body, table_name, name_space)
             count_5 = count_5 + 1
     
         if row["type"] == "call":
@@ -158,8 +196,11 @@ AND
             output_count = 0
             query_lines = []
             output_query_sql = []
-            for input_ in input_json_array:        
-                query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * input_count}, {64}) as {input_['type']}) as {input_['name']}")
+            for input_ in input_json_array:
+                try:        
+                    query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * input_count}, {64}) as {input_['type']}) as `{input_['name']}`")
+                except KeyError as e:
+                    query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * input_count}, {64}) as {input_['type']}) as input_{input_count}")
                 input_count = input_count + 1
             for output in output_json_array:
                 output_query_sql.append(f"SAFE_CAST(SUBSTRING(output, {64 * output_count}, {64}) as {output['type']}) as {output['name']}")
@@ -190,17 +231,57 @@ SELECT
 FROM 
     {fxn_table}
 WHERE 
-    LEFT(input,10) in ('{','.join(hash_ids.split(","))}')
+    LEFT(input,10) in ({hash_ids})
 AND 
     to_address IN ({contract_addresses})
 AND 
     block_timestamp >= '{current_min_ts}'"""
-                
-            # create_dbt_sql_file(query_body, table_name, name_space)
-            print(query_body)
-            quit()
+            # Big Query has a 256k character limit on queries, which we trigger with large contract address lists
+            # To get around this, we get an address list CTE and call that into the query 
+            if len(query_body) > 250000:
+                query_body = f"""
+{left_bracket}{left_bracket}
+config(
+materialized='view',
+schema='blocktrekker',
+name='{name_space}',
+)
+{right_bracket}{right_bracket}
+WITH contract_addresses AS (
+    SELECT
+        TRIM(array_element, "[]") as contract_address
+    FROM 
+        {left_bracket}{left_bracket} source('decoded_contracts', 'decode_contracts') {right_bracket}{right_bracket}, 
+        UNNEST(SPLIT(contract_addresses, ',')) AS array_element
+    WHERE
+        sub_name = '{table_name}'
+)
+SELECT 
+    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else ''}
+    transaction_hash as call_tx_hash,
+    to_address as contract_address,
+    output as output_0,
+    block_number as call_block_number,
+    block_timestamp as call_block_time,
+    status as call_success,
+    trace_address as call_trace_address,
+    trace_id as call_trace_id,
+    error as call_error,
+    trace_type as call_trace_type,
+    from_address as trace_from_address,
+    value as trace_value,
+    method_id
+FROM 
+    {fxn_table}
+WHERE 
+    LEFT(input,10) in ({hash_ids})
+AND 
+    to_address IN (SELECT contract_address FROM (select * from contract_addresses))
+AND 
+    block_timestamp >= '{current_min_ts}'"""
+            create_dbt_sql_file(query_body, table_name, name_space)
             count_5 = count_5 + 1
             print(count_5)
                 
+print("total models:")
 print(count_5)
-print(f"total:{estimated_cost}")
