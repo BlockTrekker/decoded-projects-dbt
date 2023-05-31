@@ -22,7 +22,7 @@ WITH ungrouped AS (
       a.name,
       namespace,
       c.block_timestamp AS created_ts,
-      CASE WHEN evt.name IS NOT NULL THEN CONCAT(namespace, '_', evt.name) 
+      CASE WHEN evt.name IS NOT NULL THEN evt.name
            ELSE "ERROR" END AS sub_name,
       CASE WHEN evt.name IS NOT NULL THEN 'event'
            ELSE "ERROR" END AS type,
@@ -60,7 +60,7 @@ WITH ungrouped AS (
       a.name,
       namespace,
       c.block_timestamp AS created_ts,
-      CASE WHEN call.name IS NOT NULL THEN CONCAT(namespace, '_', call.name) 
+      CASE WHEN call.name IS NOT NULL THEN call.name
            ELSE "ERROR" END AS sub_name,
       CASE WHEN call.name IS NOT NULL THEN 'call' 
            ELSE "ERROR" END AS type,
@@ -93,7 +93,10 @@ SELECT
   TO_JSON_STRING(ARRAY_AGG(DISTINCT hash_id)) as hash_ids,
   TO_JSON_STRING(ARRAY_AGG(DISTINCT address)) as contract_addresses,
   contract_name,
-  namespace
+  namespace,
+  COUNT(*) OVER (Partition By sub_name) as count
 FROM ungrouped
+WHERE sub_name in (select sub_name from {{ source("decoded_contracts", "spellbook_dependent_names") }})
 GROUP BY sub_name, type, contract_name, namespace
+ORDER BY count DESC
   

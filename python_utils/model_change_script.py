@@ -1,7 +1,7 @@
 import subprocess
 
 # Define the number of model paths to use
-num_model_paths = 158
+num_model_paths = 10
 
 # Define the path to your dbt project and the name of the target to run
 target_name = 'prod'
@@ -32,8 +32,7 @@ for i in range(num_model_paths):
     print(f'Running dbt with models_{i}...')
     final_i = i
     subprocess.run(['dbt', 'run', f'--target={target_name}'])
-    if i > 0:
-        break
+
 
 with open('dbt_project.yml', 'r') as f:
     contents = f.read()

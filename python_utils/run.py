@@ -6,9 +6,9 @@ print("This script will populate a Big Query table with decoded contract data fr
 print("it will take a few hours to run to completion.")
 
 while True:
-    user_input = input("Do you want to continue? (Y/N)").lower()
+    user_input = input("Do you want to continue? (Y/N)   ").lower()
     if user_input == "y":
-        # Do something
+        # Do something  
         break
     elif user_input == "n":
         print("Breaking the loop.")
@@ -34,11 +34,13 @@ except:
     print("Error removing the 'models' directory")
     exit(1)
 
-# Step 2: Run 'dbt --target prod'
+
+# Step 2: Run 'python_utils/model_persistent_change_script.py'
+print("running model_persistent_change_script.py")
 try:
-    subprocess.run(['dbt', 'run', '--target', 'prod'], check=True)
+    subprocess.run(['python', 'python_utils/model_persistent_change_script.py'], check=True)
 except subprocess.CalledProcessError as e:
-    print(f"Error running dbt: {e}")
+    print(f"Error running python: {e}")
     exit(1)
 
 # Step 3: Run 'python_utils/decoded_contracts_table_creator_fresh.py'
@@ -51,7 +53,7 @@ except subprocess.CalledProcessError as e:
     print(f"Error running decoded_contracts_table_creator_fresh.py: {e}")
     exit(1)
 
-# Step 5: Run 'dbt run --target prod'
+# Step 5: Run 'dbt run --target prod' through the model_change_script.py
 print("running dbt run --target prod to populate the new models in BigQuery")
 print("it will take a bit to compile the new models after printing 'Running with dbt=1.4.5' It's not frozen!")
 print("the actual running of the models in dbt will take a few hours")

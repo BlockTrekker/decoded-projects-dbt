@@ -12,7 +12,7 @@ blocktrekker_admin:
       timeout_seconds: 200
       location: US
       priority: interactive # Big Query info
-      maximum_bytes_billed: 10000000000
+      maximum_bytes_billed: 10000000000000
 
     prod: # additional targets
       type: bigquery # database type
@@ -20,12 +20,12 @@ blocktrekker_admin:
       ### database-specific connection details
       keyfile: ../keys/blocktrekker-admin.json
       threads: 32
-      project: awesome-web3
-      schema: decoded_projects
+      project: blocktrekker
+      schema: utils
       timeout_seconds: 2000
       location: US
       priority: interactive # Big Query info
-      maximum_bytes_billed: 10000000000
+      maximum_bytes_billed: 10000000000000
       gcs_bucket: blocktrekker
 
 <profile-name>: # additional profiles

@@ -10,7 +10,6 @@ from datetime import datetime
 import pandas as pd
 import math
 
-# json.field_size_limit(sys.maxsize)
     
 credential_path = "../keys/blocktrekker-admin.json"
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credential_path
