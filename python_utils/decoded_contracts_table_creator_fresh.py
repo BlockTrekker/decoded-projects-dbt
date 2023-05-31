@@ -58,6 +58,373 @@ def count_duplicates(string, string_list):
     counts = Counter(string_list)
     return counts[string]
 
+# create the query body if there are no arrays or structs being called in any of the inputs or outputs
+def create_call_query_body_sql(fxn_table, hash_ids, contract_addresses, query_lines, current_min_ts, name_space, table_name):
+    left_bracket = "{"
+    right_bracket = "}"
+    query_body = f"""
+{left_bracket}{left_bracket}
+config(
+materialized='table',
+schema='blocktrekker',
+name='{name_space}',
+)
+{right_bracket}{right_bracket}
+SELECT 
+    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else ''}
+    tx_hash as call_tx_hash,
+    `to` as contract_address,
+    output as output_0,
+    block_number as call_block_number,
+    block_time as call_block_time,
+    status as call_success,
+    trace_address as call_trace_address,
+    trace_id as call_trace_id,
+    error as call_error,
+    call_type as call_trace_type,
+    `from` as trace_from_address,
+    value as trace_value,
+    method_id
+FROM 
+    {fxn_table}
+WHERE 
+    method_id in ({hash_ids})
+AND 
+    `to` IN ({contract_addresses})
+AND 
+    block_time >= '{current_min_ts}'"""
+            # Big Query has a 256k character limit on queries, which we trigger with large contract address lists
+            # To get around this, we get an address list CTE and call that into the query 
+    if len(query_body) > 250000:
+                query_body = f"""
+{left_bracket}{left_bracket}
+config(
+materialized='table',
+schema='blocktrekker',
+name='{name_space}',
+)
+{right_bracket}{right_bracket}
+WITH contract_addresses AS (
+    SELECT
+        TRIM(array_element, "[]") as contract_address
+    FROM 
+        {left_bracket}{left_bracket} source('decoded_contracts', 'decode_contracts') {right_bracket}{right_bracket}, 
+        UNNEST(SPLIT(contract_addresses, ',')) AS array_element
+    WHERE
+        sub_name = '{table_name}'
+)
+SELECT 
+    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else ''}
+    tx_hash as call_tx_hash,
+    `to` as contract_address,
+    output as output_0,
+    block_number as call_block_number,
+    block_time as call_block_time,
+    status as call_success,
+    trace_address as call_trace_address,
+    trace_id as call_trace_id,
+    error as call_error,
+    call_type as call_trace_type,
+    `from` as trace_from_address,
+    value as trace_value,
+    method_id
+FROM 
+    {fxn_table}
+WHERE 
+    method_id in ({hash_ids})
+AND 
+    `to` IN (SELECT contract_address FROM (select * from contract_addresses))
+AND 
+    block_time >= '{current_min_ts}'"""
+    return query_body
+
+# create the query body if there are arrays or structs being called in any of the inputs or outputs
+def create_call_query_body_array(fxn_table, contract_addresses, hash_ids, query_lines, current_min_ts, name_space, table_name):
+    left_bracket = '{'
+    right_bracket = '}'
+
+    query_body = f"""
+{left_bracket}{left_bracket}
+config(
+materialized='table',
+schema='{name_space}',
+name='{name_space}',
+)
+{right_bracket}{right_bracket}
+WITH cte AS (
+    SELECT
+        tx_hash as call_tx_hash,
+        `to` as contract_address,
+        output as output_0,
+        block_number as call_block_number,
+        block_time as call_block_time,
+        success as call_success,
+        trace_address as call_trace_address,
+        trace_id as call_trace_id,
+        `error` as call_error,
+        type as call_trace_type,
+        `from` as trace_from_address,
+        value as trace_value,
+        method_id,
+        udfs.DECODE_CALL_ENTRY(abi, input, output) as decoded_values
+    FROM {fxn_table} AS f
+    LEFT JOIN `blocktrekker.decoded_contracts.dune_abis` AS da ON da.address = f.`to`
+    WHERE method_id in ({hash_ids})
+    AND 
+    f.`to` IN ({contract_addresses})
+    AND 
+    block_time >= '{current_min_ts}'
+)
+SELECT 
+    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else ''}
+    call_tx_hash,
+    contract_address,
+    output_0,
+    call_block_number,
+    call_block_time,
+    call_success,
+    call_trace_address,
+    call_trace_id,
+    call_error,
+    call_trace_type,
+    trace_from_address,
+    trace_value,
+    method_id
+FROM
+    cte"""
+            # Big Query has a 256k character limit on queries, which we trigger with large contract address lists
+            # To get around this, we get an address list CTE and call that into the query 
+    if len(query_body) > 250000:
+                query_body = f"""
+{left_bracket}{left_bracket}
+config(
+materialized='table',
+schema='{name_space}',
+name='{name_space}',
+)
+{right_bracket}{right_bracket}
+WITH contract_addresses AS (
+    SELECT
+        TRIM(array_element, "[]") as contract_address
+    FROM 
+        {left_bracket}{left_bracket} source('decoded_contracts', 'decode_contracts') {right_bracket}{right_bracket}, 
+        UNNEST(SPLIT(contract_addresses, ',')) AS array_element
+    WHERE
+        sub_name = '{table_name}'
+),
+
+cte AS (
+    SELECT
+        tx_hash as call_tx_hash,
+        `to` as contract_address,
+        output as output_0,
+        block_number as call_block_number,
+        block_time as call_block_time,
+        success as call_success,
+        trace_address as call_trace_address,
+        trace_id as call_trace_id,
+        `error` as call_error,
+        type as call_trace_type,
+        `from` as trace_from_address,
+        value as trace_value,
+        method_id,
+        udfs.DECODE_CALL_ENTRY(abi, input, output) as decoded_values
+    FROM {fxn_table} AS f
+    LEFT JOIN `blocktrekker.decoded_contracts.dune_abis` AS da ON da.address = f.`to`
+    WHERE method_id in ({hash_ids})
+    AND  
+    f.`to` IN (SELECT contract_address FROM (select * from contract_addresses))
+    AND 
+    block_time >= '{current_min_ts}'
+)
+SELECT 
+    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else ''}
+    call_tx_hash,
+    contract_address,
+    output_0,
+    call_block_number,
+    call_block_time,
+    call_success,
+    call_trace_address,
+    call_trace_id,
+    call_error,
+    call_trace_type,
+    trace_from_address,
+    trace_value,
+    method_id
+FROM
+    cte
+"""
+    return query_body
+
+
+# call this function to create the query body for any query with arrays as input types
+def create_logs_query_body_array(name_space, evt_table, hash_ids, contract_addresses, current_min_ts, query_lines, table_name):
+    left_bracket = '{'
+    right_bracket = '}'
+    query_body = f"""
+{left_bracket}{left_bracket}
+config(
+    materialized='table',
+    schema='{name_space}',
+    name='{name_space}',
+)
+{right_bracket}{right_bracket}
+WITH cte AS (
+    SELECT
+        contract_address,
+        block_number as evt_block_number,
+        block_time as evt_block_time,
+        `index` as evt_index,
+        tx_hash as evt_tx_hash,
+        tx_index as evt_tx_index,
+        udfs.DECODE_LOG_ENTRY(topic0, topic1, topic2, topic3, data, abi) as decoded_values,
+        evt_hash
+    FROM {evt_table} AS l
+    LEFT JOIN `blocktrekker.decoded_contracts.dune_abis` AS da ON da.address = l.contract_address
+    WHERE evt_hash in ({hash_ids})
+    AND 
+    contract_address IN ({contract_addresses})
+    AND 
+    block_time >= '{current_min_ts}'
+)
+
+SELECT
+    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else '' }
+    contract_address,
+    evt_block_number,
+    evt_block_time,
+    evt_index,
+    evt_tx_hash,
+    evt_tx_index,
+    evt_hash,
+FROM 
+    cte
+    """
+                        
+            # Big Query has a 256k character limit on queries, which we trigger with large contract address lists
+            # To get around this, we get an address list CTE and call that into the query 
+    if len(query_body) > 250000:
+        query_body = f"""
+{left_bracket}{left_bracket}
+config(
+    materialized='table',
+    schema='{name_space}',
+    name='{name_space}',
+)
+{right_bracket}{right_bracket}
+WITH contract_addresses AS (
+    SELECT
+        TRIM(array_element, "[]") as contract_address
+    FROM 
+        {left_bracket}{left_bracket} source('decoded_contracts', 'decode_contracts') {right_bracket}{right_bracket}, 
+        UNNEST(SPLIT(contract_addresses, ',')) AS array_element
+    WHERE
+        sub_name = '{table_name}'
+),
+
+cte AS (
+    SELECT
+        contract_address,
+        block_number as evt_block_number,
+        block_time as evt_block_time,
+        `index` as evt_index,
+        tx_hash as evt_tx_hash,
+        tx_index as evt_tx_index,
+        udfs.DECODE_LOG_ENTRY(topic0, topic1, topic2, topic3, data, abi) as decoded_values,
+        evt_hash
+    FROM {evt_table} AS l
+    LEFT JOIN `blocktrekker.decoded_contracts.dune_abis` AS da ON da.address = l.contract_address
+    WHERE evt_hash in ({hash_ids})
+    AND 
+    contract_address IN (SELECT contract_address FROM (select * from contract_addresses))
+    AND 
+    block_time >= '{current_min_ts}'
+)
+
+SELECT
+    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else '' }
+    contract_address,
+    evt_block_number,
+    evt_block_time,
+    evt_index,
+    evt_tx_hash,
+    evt_tx_index,
+    evt_hash,
+FROM 
+    cte
+    """
+    return query_body
+
+# create the query body for any query with no arrays
+def create_logs_query_body_sql(name_space, evt_table, hash_ids, contract_addresses, current_min_ts, query_lines, table_name):
+    query_body = f"""
+{left_bracket}{left_bracket}
+config(
+    materialized='table',
+    schema='{name_space}',
+    name='{name_space}',
+)
+{right_bracket}{right_bracket}
+SELECT
+    contract_address,
+    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else '' }
+    block_number as evt_block_number,
+    block_time as evt_block_time,
+    `index` as evt_index,
+    tx_hash as evt_tx_hash,
+    tx_index as evt_tx_index,
+    evt_hash
+FROM 
+    {evt_table}
+WHERE 
+    evt_hash in ({hash_ids})
+AND 
+    contract_address IN ({contract_addresses})
+AND 
+    block_time >= '{current_min_ts}'"""
+
+            # Big Query has a 256k character limit on queries, which we trigger with large contract address lists
+            # To get around this, we get an address list CTE and call that into the query 
+    if len(query_body) > 250000:
+                query_body = f"""
+{left_bracket}{left_bracket}
+config(
+    materialized='table',
+    schema='{name_space}',
+    name='{name_space}',
+)
+{right_bracket}{right_bracket}
+WITH contract_addresses AS (
+    SELECT
+        TRIM(array_element, "[]") as contract_address
+    FROM 
+        {left_bracket}{left_bracket} source('decoded_contracts', 'decode_contracts') {right_bracket}{right_bracket}, 
+        UNNEST(SPLIT(contract_addresses, ',')) AS array_element
+    WHERE
+        sub_name = '{table_name}'
+)
+SELECT
+    contract_address,
+    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else '' }
+    block_number as evt_block_number,
+    block_time as evt_block_time,
+    `index` as evt_index,
+    tx_hash as evt_tx_hash,
+    tx_index as evt_tx_index,
+    evt_hash
+FROM 
+    {evt_table}
+WHERE 
+    evt_hash in ({hash_ids})
+AND 
+    contract_address IN (SELECT * FROM contract_addresses)
+AND 
+    block_time >= '{current_min_ts}'"""
+
+    return query_body
+
+# Start the non-functions
 bigquery_client = bigquery.Client()
 storage_client = storage.Client()
 
@@ -197,113 +564,39 @@ for file in file_list:
         if row["type"] == "event":
             query_lines = []
             input_count = 0
-            for input_ in input_json_array:
-                if input_['type'].startswith('ARRAY'):
-                    cast_type = input_['type'].replace('ARRAY', '').replace('<', '').replace('>', '')
-                    try:
-                        query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = '{input_['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `{input_['name']}`")    
-                        # query_lines.append(f"SAFE_CAST(topic{input_count} as {input_['type']}) as `{input_['name'].replace('_partition', 'partition')}`")
-                    except KeyError as e:
-                        query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = 'input_{input_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `input_{input_count}`")    
-                        input_count = input_count + 1
-                else:
-                    try:
-                        query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = '{input_['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {input_['type']}) AS `{input_['name']}`")
-                    except KeyError as e:
-                        query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = 'input_{input_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {input_['type']}) AS `input_{input_count}`")
-                        input_count = input_count + 1
-            query_body = f"""
-{left_bracket}{left_bracket}
-config(
-    materialized='table',
-    schema='{name_space}',
-    name='{name_space}',
-)
-{right_bracket}{right_bracket}
-WITH cte AS (
-    SELECT
-        contract_address,
-        block_number as evt_block_number,
-        block_time as evt_block_time,
-        `index` as evt_index,
-        tx_hash as evt_tx_hash,
-        tx_index as evt_tx_index,
-        udfs.DECODE_LOG_ENTRY(topic0, topic1, topic2, topic3, data, abi) as decoded_values,
-        evt_hash
-    FROM {evt_table} AS l
-    LEFT JOIN `blocktrekker.decoded_contracts.dune_abis` AS da ON da.address = l.contract_address
-    WHERE evt_hash in ({hash_ids})
-    AND 
-    contract_address IN ({contract_addresses})
-    AND 
-    block_time >= '{current_min_ts}'
-)
+            if any(input_['type'].startswith('ARRAY') for input_ in input_json_array):
+            # There's at least one input of type 'ARRAY' this will impact the query body
+                for input_ in input_json_array:
+                    if input_['type'].startswith('ARRAY'):
+                        cast_type = input_['type'].replace('ARRAY', '').replace('<', '').replace('>', '')
+                        try:
+                            query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = '{input_['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `{input_['name']}`")    
+                            # query_lines.append(f"SAFE_CAST(topic{input_count} as {input_['type']}) as `{input_['name'].replace('_partition', 'partition')}`")
+                        except KeyError as e:
+                            query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = 'input_{input_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `input_{input_count}`")    
+                            input_count = input_count + 1
+                    else:
+                        try:
+                            query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = '{input_['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {input_['type']}) AS `{input_['name']}`")
+                        except KeyError as e:
+                            query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = 'input_{input_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {input_['type']}) AS `input_{input_count}`")
+                            input_count = input_count + 1
+                query_body = create_logs_query_body_array(name_space, evt_table, hash_ids, contract_addresses, current_min_ts, query_lines,table_name)
+            else:
+                for input_ in input_json_array:
+                    if input_count < 4:
+                        try:
+                            query_lines.append(f"SAFE_CAST(topic{input_count} as {input_['type']}) as `{input_['name'].replace('_partition', 'partition')}`")
+                        except KeyError as e:
+                            query_lines.append(f"SAFE_CAST(topic{input_count} as {input_['type']}) as input_{input_count}")
+                    else: 
+                        try: 
+                            query_lines.append(f"SAFE_CAST(SUBSTRING(data, {11 + 64 * input_count}, {64}) as {input_['type']}) as `{input_['name']}`")
+                        except KeyError as e:
+                            query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * input_count}, {64}) as {input_['type']}) as input_{input_count}")
+                    input_count = input_count + 1
+                query_body = create_logs_query_body_sql(name_space, evt_table, hash_ids, contract_addresses, current_min_ts, query_lines,table_name)
 
-SELECT
-    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else '' }
-    contract_address,
-    evt_block_number,
-    evt_block_time,
-    evt_index,
-    evt_tx_hash,
-    evt_tx_index,
-    evt_hash,
-FROM 
-    cte, UNNEST(decoded_values) as d
-    """
-                        
-            # Big Query has a 256k character limit on queries, which we trigger with large contract address lists
-            # To get around this, we get an address list CTE and call that into the query 
-            if len(query_body) > 250000:
-                query_body = f"""
-{left_bracket}{left_bracket}
-config(
-    materialized='table',
-    schema='{name_space}',
-    name='{name_space}',
-)
-{right_bracket}{right_bracket}
-WITH contract_addresses AS (
-    SELECT
-        TRIM(array_element, "[]") as contract_address
-    FROM 
-        {left_bracket}{left_bracket} source('decoded_contracts', 'decode_contracts') {right_bracket}{right_bracket}, 
-        UNNEST(SPLIT(contract_addresses, ',')) AS array_element
-    WHERE
-        sub_name = '{table_name}'
-),
-
-cte AS (
-    SELECT
-        contract_address,
-        block_number as evt_block_number,
-        block_time as evt_block_time,
-        `index` as evt_index,
-        tx_hash as evt_tx_hash,
-        tx_index as evt_tx_index,
-        udfs.DECODE_LOG_ENTRY(topic0, topic1, topic2, topic3, data, abi) as decoded_values,
-        evt_hash
-    FROM {evt_table} AS l
-    LEFT JOIN `blocktrekker.decoded_contracts.dune_abis` AS da ON da.address = l.contract_address
-    WHERE evt_hash in ({hash_ids})
-    AND 
-    contract_address IN (SELECT contract_address FROM (select * from contract_addresses))
-    AND 
-    block_time >= '{current_min_ts}'
-)
-
-SELECT
-    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else '' }
-    contract_address,
-    evt_block_number,
-    evt_block_time,
-    evt_index,
-    evt_tx_hash,
-    evt_tx_index,
-    evt_hash,
-FROM 
-    cte, UNNEST(decoded_values) as d
-    """
             separate_models = count_duplicates(table_name, evt_sub_name_counter)
             evt_sub_name_counter.append(table_name)
             create_dbt_sql_file(query_body, table_name, name_space, separate_models)
@@ -314,148 +607,50 @@ FROM
             output_count = 0
             query_lines = []
             output_query_sql = []
-            for input_ in input_json_array:
-                if input_['type'].startswith('ARRAY'):
-                    cast_type = input_['type'].replace('ARRAY', '').replace('<', '').replace('>', '')
-                    try:
-                        query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = '{input_['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `{input_['name']}`")    
-                        # query_lines.append(f"SAFE_CAST(topic{input_count} as {input_['type']}) as `{input_['name'].replace('_partition', 'partition')}`")
+            if any(input_['type'].startswith('ARRAY') for input_ in input_json_array) or any(output_['type'].startswith('ARRAY') for output_ in output_json_array):
+                for input_ in input_json_array:
+                    if input_['type'].startswith('ARRAY'):
+                        cast_type = input_['type'].replace('ARRAY', '').replace('<', '').replace('>', '')
+                        try:
+                            query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = '{input_['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `{input_['name']}`")    
+                            # query_lines.append(f"SAFE_CAST(topic{input_count} as {input_['type']}) as `{input_['name'].replace('_partition', 'partition')}`")
+                        except KeyError as e:
+                            query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = 'input_{input_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `input_{input_count}`")    
+                            input_count = input_count + 1
+                    else:
+                        try:
+                            query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = '{input_['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {input_['type']}) AS `{input_['name']}`")
+                        except KeyError as e:
+                            query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = 'input_{input_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {input_['type']}) AS `input_{input_count}`")
+                            input_count = input_count + 1
+                for output in output_json_array:
+                    if output['type'].startswith('ARRAY'):
+                        cast_type = input_['type'].replace('ARRAY', '').replace('<', '').replace('>', '')
+                        try:
+                            query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = '{output['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `{output['name']}`")    
+                            # query_lines.append(f"SAFE_CAST(topic{input_count} as {input_['type']}) as `{input_['name'].replace('_partition', 'partition')}`")
+                        except KeyError as e:
+                            query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = 'output_{output_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `output_{output_count}`")    
+                            output_count = output_count + 1
+                    else:
+                        try:
+                            query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = '{output['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {output['type']}) AS `{output['name']}`")
+                        except KeyError as e:
+                            query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = 'output_{output_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {output['type']}) AS `output_{output_count}`")
+                            output_count = output_count + 1
+                query_body = create_call_query_body_array(fxn_table, contract_addresses, hash_ids, query_lines, current_min_ts, name_space,table_name)
+            else:
+                for input_ in input_json_array:
+                    try:        
+                        query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * input_count}, {64}) as {input_['type']}) as `{input_['name']}`")
                     except KeyError as e:
-                        query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = 'input_{input_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `input_{input_count}`")    
-                        input_count = input_count + 1
-                else:
-                    try:
-                        query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = '{input_['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {input_['type']}) AS `{input_['name']}`")
-                    except KeyError as e:
-                        query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = 'input_{input_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {input_['type']}) AS `input_{input_count}`")
-                        input_count = input_count + 1
-            for output in output_json_array:
-                if output['type'].startswith('ARRAY'):
-                    cast_type = input_['type'].replace('ARRAY', '').replace('<', '').replace('>', '')
-                    try:
-                        query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = '{output['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `{output['name']}`")    
-                        # query_lines.append(f"SAFE_CAST(topic{input_count} as {input_['type']}) as `{input_['name'].replace('_partition', 'partition')}`")
-                    except KeyError as e:
-                        query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = 'output_{output_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `output_{output_count}`")    
-                        output_count = output_count + 1
-                else:
-                    try:
-                        query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = '{output['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {output['type']}) AS `{output['name']}`")
-                    except KeyError as e:
-                        query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = 'output_{output_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {output['type']}) AS `output_{output_count}`")
-                        output_count = output_count + 1
-            query_body = f"""
-{left_bracket}{left_bracket}
-config(
-materialized='table',
-schema='{name_space}',
-name='{name_space}',
-)
-{right_bracket}{right_bracket}
-WITH cte AS (
-    SELECT
-        tx_hash as call_tx_hash,
-        `to` as contract_address,
-        output as output_0,
-        block_number as call_block_number,
-        block_time as call_block_time,
-        success as call_success,
-        trace_address as call_trace_address,
-        trace_id as call_trace_id,
-        `error` as call_error,
-        type as call_trace_type,
-        `from` as trace_from_address,
-        value as trace_value,
-        method_id,
-        udfs.DECODE_CALL_ENTRY(abi, input, output) as decoded_values
-    FROM {fxn_table} AS f
-    LEFT JOIN `blocktrekker.decoded_contracts.dune_abis` AS da ON da.address = f.`to`
-    WHERE method_id in ({hash_ids})
-    AND 
-    f.`to` IN ({contract_addresses})
-    AND 
-    block_time >= '{current_min_ts}'
-)
-SELECT 
-    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else ''}
-    call_tx_hash,
-    contract_address,
-    output_0,
-    call_block_number,
-    call_block_time,
-    call_success,
-    call_trace_address,
-    call_trace_id,
-    call_error,
-    call_trace_type,
-    trace_from_address,
-    trace_value,
-    method_id
-FROM
-    cte"""
-            # Big Query has a 256k character limit on queries, which we trigger with large contract address lists
-            # To get around this, we get an address list CTE and call that into the query 
-            if len(query_body) > 250000:
-                query_body = f"""
-{left_bracket}{left_bracket}
-config(
-materialized='table',
-schema='{name_space}',
-name='{name_space}',
-)
-{right_bracket}{right_bracket}
-WITH contract_addresses AS (
-    SELECT
-        TRIM(array_element, "[]") as contract_address
-    FROM 
-        {left_bracket}{left_bracket} source('decoded_contracts', 'decode_contracts') {right_bracket}{right_bracket}, 
-        UNNEST(SPLIT(contract_addresses, ',')) AS array_element
-    WHERE
-        sub_name = '{table_name}'
-),
+                        query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * input_count}, {64}) as {input_['type']}) as input_{input_count}")
+                    input_count = input_count + 1
+                for output in output_json_array:
+                    output_query_sql.append(f"SAFE_CAST(SUBSTRING(output, {64 * output_count}, {64}) as {output['type']}) as {output['name']}")
+                    output_count = output_count + 1
+                query_body = create_call_query_body_sql(fxn_table, contract_addresses, hash_ids, query_lines, current_min_ts, name_space,table_name)
 
-cte AS (
-    SELECT
-        tx_hash as call_tx_hash,
-        `to` as contract_address,
-        output as output_0,
-        block_number as call_block_number,
-        block_time as call_block_time,
-        success as call_success,
-        trace_address as call_trace_address,
-        trace_id as call_trace_id,
-        `error` as call_error,
-        type as call_trace_type,
-        `from` as trace_from_address,
-        value as trace_value,
-        method_id,
-        udfs.DECODE_CALL_ENTRY(abi, input, output) as decoded_values
-    FROM {fxn_table} AS f
-    LEFT JOIN `blocktrekker.decoded_contracts.dune_abis` AS da ON da.address = f.`to`
-    WHERE method_id in ({hash_ids})
-    AND  
-    f.`to` IN (SELECT contract_address FROM (select * from contract_addresses))
-    AND 
-    block_time >= '{current_min_ts}'
-)
-SELECT 
-    {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else ''}
-    call_tx_hash,
-    contract_address,
-    output_0,
-    call_block_number,
-    call_block_time,
-    call_success,
-    call_trace_address,
-    call_trace_id,
-    call_error,
-    call_trace_type,
-    trace_from_address,
-    trace_value,
-    method_id
-FROM
-    cte
-"""
             separate_models = count_duplicates(table_name, call_sub_name_counter)
             call_sub_name_counter.append(table_name)
             create_dbt_sql_file(query_body, table_name, name_space, separate_models)
