@@ -31,7 +31,7 @@ for i in range(num_model_paths):
     # Run dbt with the updated model path
     print(f'Running dbt with models_{i}...')
     final_i = i
-    subprocess.run(['dbt', 'run', f'--target={target_name}'])
+    subprocess.run(['dbt', 'run', f'--target={target_name}', f'--exclude=AggregationRouterV4_call_uniswapV3Swap.sql', f'--exclude=models_0/oneinch_ethereum/AggregationRouterV5_call_unoswap.sql'])
 
 
 with open('dbt_project.yml', 'r') as f:

@@ -22,7 +22,7 @@ blocktrekker_admin:
       threads: 32
       project: blocktrekker
       schema: utils
-      timeout_seconds: 2000
+      timeout_seconds: 180
       location: US
       priority: interactive # Big Query info
       maximum_bytes_billed: 10000000000000

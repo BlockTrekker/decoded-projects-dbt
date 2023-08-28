@@ -40,3 +40,6 @@ sources:
       - name: logs
       - name: traces
       - name: blocks
+      - name: contracts
+      - name: token_types
+

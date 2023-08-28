@@ -83,9 +83,8 @@ WITH ungrouped AS (
     sub_name, type, hash_id, contract_name, namespace, inputs, outputs, address, min_created_ts
 )
 
-
 SELECT
-  sub_name,
+  n.sub_name,
   type,
   min(min_created_ts) as min_created_ts,
   TO_JSON_STRING(ARRAY_AGG(DISTINCT inputs)) as inputs_,
@@ -94,9 +93,10 @@ SELECT
   TO_JSON_STRING(ARRAY_AGG(DISTINCT address)) as contract_addresses,
   contract_name,
   namespace,
-  COUNT(*) OVER (Partition By sub_name) as count
-FROM ungrouped
-WHERE sub_name in (select sub_name from {{ source("decoded_contracts", "spellbook_dependent_names") }})
-GROUP BY sub_name, type, contract_name, namespace
+  COUNT(*) OVER (Partition By u.sub_name) as count
+FROM ungrouped u
+LEFT JOIN {{ source("decoded_contracts", "spellbook_dependent_names") }} n
+  ON LOWER(n.sub_name) = LOWER(u.sub_name) 
+WHERE LOWER(u.sub_name) in (select LOWER(sub_name) from {{ source("decoded_contracts", "spellbook_dependent_names") }})
+GROUP BY u.sub_name, type, contract_name, namespace, n.sub_name
 ORDER BY count DESC
-  

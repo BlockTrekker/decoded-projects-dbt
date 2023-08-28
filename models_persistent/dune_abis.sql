@@ -8,7 +8,10 @@
 
 
 SELECT 
-  address.*,
+  address.address,
+  REPLACE(address.name, '.', '_') AS name,
+  REPLACE(address.namespace, '.', '_') AS namespace,
+  address.ordinal,
   abi.abi
 FROM 
   {{ source('decoded_projects','address_to_ordinal_dune') }}  address

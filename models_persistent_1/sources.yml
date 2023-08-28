@@ -40,3 +40,5 @@ sources:
       - name: logs
       - name: traces
       - name: blocks
+      - name: token_types
+

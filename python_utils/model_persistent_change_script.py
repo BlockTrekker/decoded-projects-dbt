@@ -25,7 +25,7 @@ for i, model_path in enumerate(model_paths):
 
     # Run dbt with the updated model path
     print(f'Running dbt with {model_path}...')
-    subprocess.run(['dbt', 'run', f'--target={target_name}'])
+    subprocess.run(['dbt', 'run', '--target', target_name, '--exclude', 'evt_approval', 'evt_transfer'])
 
 # Change the model path back to models_persistent
 with open('dbt_project.yml', 'r') as f:

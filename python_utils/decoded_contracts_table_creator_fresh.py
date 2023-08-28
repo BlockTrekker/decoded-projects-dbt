@@ -66,7 +66,7 @@ def create_call_query_body_sql(fxn_table, hash_ids, contract_addresses, query_li
 {left_bracket}{left_bracket}
 config(
 materialized='table',
-schema='blocktrekker',
+schema='{name_space}',
 name='{name_space}',
 )
 {right_bracket}{right_bracket}
@@ -74,10 +74,9 @@ SELECT
     {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else ''}
     tx_hash as call_tx_hash,
     `to` as contract_address,
-    output as output_0,
     block_number as call_block_number,
     block_time as call_block_time,
-    status as call_success,
+    success as call_success,
     trace_address as call_trace_address,
     trace_id as call_trace_id,
     error as call_error,
@@ -100,13 +99,13 @@ AND
 {left_bracket}{left_bracket}
 config(
 materialized='table',
-schema='blocktrekker',
+schema='{name_space}',
 name='{name_space}',
 )
 {right_bracket}{right_bracket}
 WITH contract_addresses AS (
     SELECT
-        TRIM(array_element, "[]") as contract_address
+        SUBSTR(TRIM(array_element, "[]"), 2, LENGTH(TRIM(array_element, "[]")) - 2) AS contract_address
     FROM 
         {left_bracket}{left_bracket} source('decoded_contracts', 'decode_contracts') {right_bracket}{right_bracket}, 
         UNNEST(SPLIT(contract_addresses, ',')) AS array_element
@@ -117,10 +116,9 @@ SELECT
     {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else ''}
     tx_hash as call_tx_hash,
     `to` as contract_address,
-    output as output_0,
     block_number as call_block_number,
     block_time as call_block_time,
-    status as call_success,
+    success as call_success,
     trace_address as call_trace_address,
     trace_id as call_trace_id,
     error as call_error,
@@ -139,7 +137,7 @@ AND
     return query_body
 
 # create the query body if there are arrays or structs being called in any of the inputs or outputs
-def create_call_query_body_array(fxn_table, contract_addresses, hash_ids, query_lines, current_min_ts, name_space, table_name):
+def create_call_query_body_array(fxn_table, hash_ids, contract_addresses, query_lines, current_min_ts, name_space, table_name):
     left_bracket = '{'
     right_bracket = '}'
 
@@ -155,7 +153,6 @@ WITH cte AS (
     SELECT
         tx_hash as call_tx_hash,
         `to` as contract_address,
-        output as output_0,
         block_number as call_block_number,
         block_time as call_block_time,
         success as call_success,
@@ -166,9 +163,19 @@ WITH cte AS (
         `from` as trace_from_address,
         value as trace_value,
         method_id,
-        udfs.DECODE_CALL_ENTRY(abi, input, output) as decoded_values
+        CASE 
+            WHEN success = TRUE THEN udfs.DECODE_CALL_ENTRY(abi, input, output) 
+            ELSE NULL 
+            END as decoded_values
     FROM {fxn_table} AS f
-    LEFT JOIN `blocktrekker.decoded_contracts.dune_abis` AS da ON da.address = f.`to`
+    CROSS JOIN (
+        SELECT
+            abi
+        FROM `blocktrekker.decoded_contracts.dune_abis`
+        WHERE address IN ({contract_addresses})
+        AND abi LIKE '%"name":"{table_name.rsplit('_', 1)[-1]}"%'
+        LIMIT 1
+    ) AS da
     WHERE method_id in ({hash_ids})
     AND 
     f.`to` IN ({contract_addresses})
@@ -179,7 +186,6 @@ SELECT
     {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else ''}
     call_tx_hash,
     contract_address,
-    output_0,
     call_block_number,
     call_block_time,
     call_success,
@@ -205,7 +211,7 @@ name='{name_space}',
 {right_bracket}{right_bracket}
 WITH contract_addresses AS (
     SELECT
-        TRIM(array_element, "[]") as contract_address
+        SUBSTR(TRIM(array_element, "[]"), 2, LENGTH(TRIM(array_element, "[]")) - 2) AS contract_address
     FROM 
         {left_bracket}{left_bracket} source('decoded_contracts', 'decode_contracts') {right_bracket}{right_bracket}, 
         UNNEST(SPLIT(contract_addresses, ',')) AS array_element
@@ -217,7 +223,6 @@ cte AS (
     SELECT
         tx_hash as call_tx_hash,
         `to` as contract_address,
-        output as output_0,
         block_number as call_block_number,
         block_time as call_block_time,
         success as call_success,
@@ -228,20 +233,29 @@ cte AS (
         `from` as trace_from_address,
         value as trace_value,
         method_id,
-        udfs.DECODE_CALL_ENTRY(abi, input, output) as decoded_values
+        CASE 
+            WHEN success = TRUE THEN udfs.DECODE_CALL_ENTRY(abi, input, output) 
+            ELSE NUll 
+            END as decoded_values
     FROM {fxn_table} AS f
-    LEFT JOIN `blocktrekker.decoded_contracts.dune_abis` AS da ON da.address = f.`to`
+    CROSS JOIN (
+        SELECT
+            abi
+        FROM `blocktrekker.decoded_contracts.dune_abis`
+        WHERE address IN (SELECT contract_address FROM (select * from contract_addresses))
+        AND abi LIKE '%"name":"{table_name.rsplit('_', 1)[-1]}"%'
+        LIMIT 1
+    ) AS da
     WHERE method_id in ({hash_ids})
     AND  
-    f.`to` IN (SELECT contract_address FROM (select * from contract_addresses))
+        f.`to` IN (SELECT contract_address FROM (select * from contract_addresses))
     AND 
-    block_time >= '{current_min_ts}'
+        block_time >= '{current_min_ts}'
 )
 SELECT 
     {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else ''}
     call_tx_hash,
     contract_address,
-    output_0,
     call_block_number,
     call_block_time,
     call_success,
@@ -281,7 +295,14 @@ WITH cte AS (
         udfs.DECODE_LOG_ENTRY(topic0, topic1, topic2, topic3, data, abi) as decoded_values,
         evt_hash
     FROM {evt_table} AS l
-    LEFT JOIN `blocktrekker.decoded_contracts.dune_abis` AS da ON da.address = l.contract_address
+    CROSS JOIN (
+        SELECT
+            abi
+        FROM `blocktrekker.decoded_contracts.dune_abis`
+        WHERE address IN ({contract_addresses})
+        AND abi LIKE '%"name":"{table_name.rsplit('_', 1)[-1]}"%'
+        LIMIT 1
+    ) AS da
     WHERE evt_hash in ({hash_ids})
     AND 
     contract_address IN ({contract_addresses})
@@ -315,7 +336,7 @@ config(
 {right_bracket}{right_bracket}
 WITH contract_addresses AS (
     SELECT
-        TRIM(array_element, "[]") as contract_address
+        SUBSTR(TRIM(array_element, "[]"), 2, LENGTH(TRIM(array_element, "[]")) - 2) AS contract_address
     FROM 
         {left_bracket}{left_bracket} source('decoded_contracts', 'decode_contracts') {right_bracket}{right_bracket}, 
         UNNEST(SPLIT(contract_addresses, ',')) AS array_element
@@ -334,7 +355,14 @@ cte AS (
         udfs.DECODE_LOG_ENTRY(topic0, topic1, topic2, topic3, data, abi) as decoded_values,
         evt_hash
     FROM {evt_table} AS l
-    LEFT JOIN `blocktrekker.decoded_contracts.dune_abis` AS da ON da.address = l.contract_address
+    CROSS JOIN (
+        SELECT
+            abi
+        FROM `blocktrekker.decoded_contracts.dune_abis`
+        WHERE address IN (SELECT contract_address FROM (select * from contract_addresses))
+        AND abi LIKE '%"name":"{table_name.rsplit('_', 1)[-1]}"%'
+        LIMIT 1
+    ) AS da    
     WHERE evt_hash in ({hash_ids})
     AND 
     contract_address IN (SELECT contract_address FROM (select * from contract_addresses))
@@ -397,7 +425,7 @@ config(
 {right_bracket}{right_bracket}
 WITH contract_addresses AS (
     SELECT
-        TRIM(array_element, "[]") as contract_address
+        SUBSTR(TRIM(array_element, "[]"), 2, LENGTH(TRIM(array_element, "[]")) - 2) AS contract_address
     FROM 
         {left_bracket}{left_bracket} source('decoded_contracts', 'decode_contracts') {right_bracket}{right_bracket}, 
         UNNEST(SPLIT(contract_addresses, ',')) AS array_element
@@ -442,7 +470,7 @@ while True:
         # Do something  
         break
     elif user_input == "n":
-        print("Breaking the loop.")
+        print("Ok using local data")
         break
     else:
         print("Invalid input. Please enter Y or N.")
@@ -489,7 +517,8 @@ if user_input == "y":
         shutil.rmtree(local_dir_path)
         os.makedirs(local_dir_path)
         print("Directory (static_directory) deleted then recreated successfully")
-
+else:
+    local_dir_path = 'static_data'
 
 # download all blobs with prefix to local directory
 blobs = bucket.list_blobs(prefix='decoded_contracts')
@@ -521,10 +550,8 @@ right_bracket = "}"
 for file in file_list: 
     dfs = []
     print("new_file_read")
-    # Get the data for decoded_contracts from BQ
-    # with open(file, 'r') as f:
-        # Read its contents as a string
-
+    new_line = "/n"
+    
     csv_reader = pd.read_csv(file, delimiter=',', low_memory=False)
     evt_sub_name_counter = []
     call_sub_name_counter = []
@@ -550,15 +577,15 @@ for file in file_list:
         if row['outputs']:
             try:
                 if row['outputs'] == "[null]" or row['outputs'] == '[""]':
-                    output_json_array = []
+                    output_json_array = [{"name": "output_0", "type": "STRING"}]
                 else:
                     output_json_array = json.loads(f'[{json.loads(row["outputs"])[0]}]')
             except json.decoder.JSONDecodeError as e:
                 print(e)
                 print("output: "f'[{json.loads(row["outputs"])[0]}]')
-                output_json_array = []
+                output_json_array = [{"name": "output_0", "type": "STRING"}]
         else:
-            output_json_array = []
+            output_json_array = [{"name": "output_0", "type": "STRING"}]
         contract_addresses = row['contract_addresses'][1:-1]
         current_min_ts = row['min_created_ts']
         if row["type"] == "event":
@@ -570,37 +597,72 @@ for file in file_list:
                     if input_['type'].startswith('ARRAY'):
                         cast_type = input_['type'].replace('ARRAY', '').replace('<', '').replace('>', '')
                         try:
-                            query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = '{input_['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `{input_['name']}`")    
-                            # query_lines.append(f"SAFE_CAST(topic{input_count} as {input_['type']}) as `{input_['name'].replace('_partition', 'partition')}`")
+                            query_lines.append(f"\n    (SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type.replace('ADDRESS','STRING')})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = '{input_['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), '|||')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS {cast_type.replace('ADDRESS','STRING')}) IS NOT NULL) AS `{input_['name']}`")                         
                         except KeyError as e:
-                            query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = 'input_{input_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `input_{input_count}`")    
+                            query_lines.append(f"\n    (SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type.replace('ADDRESS','STRING')})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = 'input_{input_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), '|||')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS {cast_type.replace('ADDRESS','STRING')}) IS NOT NULL) AS `input_{input_count}`")    
                             input_count = input_count + 1
                     else:
                         try:
-                            query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = '{input_['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {input_['type']}) AS `{input_['name']}`")
+                            query_lines.append(f"\n    SAFE_CAST((SELECT MAX(IF(d.key = '{input_['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {input_['type'].replace('ADDRESS','STRING')}) AS `{input_['name']}`")
                         except KeyError as e:
-                            query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = 'input_{input_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {input_['type']}) AS `input_{input_count}`")
+                            query_lines.append(f"\n    SAFE_CAST((SELECT MAX(IF(d.key = 'input_{input_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {input_['type'].replace('ADDRESS','STRING')}) AS `input_{input_count}`")
                             input_count = input_count + 1
                 query_body = create_logs_query_body_array(name_space, evt_table, hash_ids, contract_addresses, current_min_ts, query_lines,table_name)
             else:
                 for input_ in input_json_array:
-                    if input_count < 4:
-                        try:
-                            query_lines.append(f"SAFE_CAST(topic{input_count} as {input_['type']}) as `{input_['name'].replace('_partition', 'partition')}`")
-                        except KeyError as e:
-                            query_lines.append(f"SAFE_CAST(topic{input_count} as {input_['type']}) as input_{input_count}")
+                    if input_['index_type'] != 'data':
+                        if input_['type'] == 'BIGNUMERIC' or input_['type'] == 'INT64':
+                            try:
+                                query_lines.append(f"\n    SAFE_CAST(udfs.hexToInt({input_['index_type']}) as {input_['type']}) as `{input_['name'].replace('_partition', 'partition')}`")
+                            except KeyError as e:
+                                query_lines.append(f"\n    SAFE_CAST(udfs.hexToInt({input_['index_type']}) as as {input_['type']}) as input_{input_count}\n")
+                        elif input_['type'] == 'ADDRESS':
+                            try: 
+                                query_lines.append(f"\n    SAFE_CAST(CONCAT('0x', RIGHT({input_['index_type']}, 40)) as STRING) as `{input_['name'].replace('_partition', 'partition')}`")
+                            except KeyError as e:
+                                query_lines.append(f"\n    SAFE_CAST(CONCAT('0x', RIGHT({input_['index_type']}, 40)) as STRING) as input_{input_count}\n")
+                        elif input_['type'] == 'BOOL':
+                            try:
+                                query_lines.append(f"\n    SAFE_CAST(SAFE_CAST(udfs.hexToInt({input_['index_type']}) as INT) as {input_['type']}) as `{input_['name'].replace('_partition', 'partition')}`")
+                            except KeyError as e:
+                                query_lines.append(f"\n    SAFE_CAST(SAFE_CAST(udfs.hexToInt({input_['index_type']}) as INT) as {input_['type']}) as input_{input_count}\n")
+                        else:
+                            try:
+                                query_lines.append(f"\n    SAFE_CAST({input_['index_type']} as {input_['type']}) as `{input_['name'].replace('_partition', 'partition')}`")
+                            except KeyError as e:
+                                query_lines.append(f"\n    SAFE_CAST({input_['index_type']} as {input_['type']}) as input_{input_count}")
                     else: 
-                        try: 
-                            query_lines.append(f"SAFE_CAST(SUBSTRING(data, {11 + 64 * input_count}, {64}) as {input_['type']}) as `{input_['name']}`")
-                        except KeyError as e:
-                            query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * input_count}, {64}) as {input_['type']}) as input_{input_count}")
-                    input_count = input_count + 1
+                        if input_['type'] == 'BIGNUMERIC' or input_['type'] == 'INT64':
+                            try: 
+                                query_lines.append(f"\n    SAFE_CAST(udfs.hexToInt(CONCAT('0x' ,SUBSTRING(data, {3 + 64 * input_count}, {64}))) as {input_['type']}) as `{input_['name']}`")
+                            except KeyError as e:
+                                query_lines.append(f"\n    SAFE_CAST(udfs.hexToInt(CONCAT('0x', SUBSTRING(data, {3 + 64 * input_count}, {64}))) as {input_['type']}) as input_{input_count}\n")
+                        elif input_['type'] == 'ADDRESS':
+                            try: 
+                                query_lines.append(f"\n    SAFE_CAST(CONCAT('0x', RIGHT(SUBSTRING(data, {3 + 64 * input_count}, {64}), 40)) as STRING) as `{input_['name'].replace('_partition', 'partition')}`")
+                            except KeyError as e:
+                                query_lines.append(f"\n    SAFE_CAST(CONCAT('0x', RIGHT(SUBSTRING(data, {3 + 64 * input_count}, {64}), 40)) as STRING) as input_{input_count}\n")
+                        elif input_['type'] == 'BOOL':
+                            try: 
+                                query_lines.append(f"\n    SAFE_CAST(SAFE_CAST(udfs.hexToInt(CONCAT('0x' ,SUBSTRING(data, {3 + 64 * input_count}, {64}))) as INT) as BOOL) as `{input_['name'].replace('_partition', 'partition')}`")
+                            except KeyError as e:
+                                query_lines.append(f"\n    SAFE_CAST(SAFE_CAST(udfs.hexToInt(CONCAT('0x' ,SUBSTRING(data, {3 + 64 * input_count}, {64}))) as INT) as BOOL) as input_{input_count}\n")
+                        else:
+                            try: 
+                                query_lines.append(f"\n    SAFE_CAST(SUBSTRING(data, {3 + 64 * input_count}, {64}) as {input_['type']}) as `{input_['name'].replace('_partition', 'partition')}`")
+                            except KeyError as e:
+                                query_lines.append(f"\n    SAFE_CAST(SUBSTRING(data, {3 + 64 * input_count}, {64}) as {input_['type']}) as input_{input_count}\n")
+                        input_count = input_count + 1
                 query_body = create_logs_query_body_sql(name_space, evt_table, hash_ids, contract_addresses, current_min_ts, query_lines,table_name)
 
             separate_models = count_duplicates(table_name, evt_sub_name_counter)
             evt_sub_name_counter.append(table_name)
             create_dbt_sql_file(query_body, table_name, name_space, separate_models)
             count_5 = count_5 + 1
+            print(table_name)
+            print("table_name!!!!!")
+            print(query_body)
+
     
         if row["type"] == "call":
             input_count = 0
@@ -612,45 +674,73 @@ for file in file_list:
                     if input_['type'].startswith('ARRAY'):
                         cast_type = input_['type'].replace('ARRAY', '').replace('<', '').replace('>', '')
                         try:
-                            query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = '{input_['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `{input_['name']}`")    
-                            # query_lines.append(f"SAFE_CAST(topic{input_count} as {input_['type']}) as `{input_['name'].replace('_partition', 'partition')}`")
+                            query_lines.append(f"\n    (SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type.replace('ADDRESS','STRING')})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = '{input_['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), '|||')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS {cast_type.replace('ADDRESS','STRING')}) IS NOT NULL) AS `{input_['name']}`")    
                         except KeyError as e:
-                            query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = 'input_{input_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `input_{input_count}`")    
+                            query_lines.append(f"\n    (SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type.replace('ADDRESS','STRING')})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = 'input_{input_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), '|||')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS {cast_type.replace('ADDRESS','STRING')}) IS NOT NULL) AS `input_{input_count}`")    
                             input_count = input_count + 1
                     else:
                         try:
-                            query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = '{input_['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {input_['type']}) AS `{input_['name']}`")
+                            query_lines.append(f"\n    SAFE_CAST((SELECT MAX(IF(d.key = '{input_['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {input_['type'].replace('ADDRESS','STRING')}) AS `{input_['name']}`")
                         except KeyError as e:
-                            query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = 'input_{input_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {input_['type']}) AS `input_{input_count}`")
+                            query_lines.append(f"\n    SAFE_CAST((SELECT MAX(IF(d.key = 'input_{input_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {input_['type'].replace('ADDRESS','STRING')}) AS `input_{input_count}`")
                             input_count = input_count + 1
                 for output in output_json_array:
                     if output['type'].startswith('ARRAY'):
                         cast_type = input_['type'].replace('ARRAY', '').replace('<', '').replace('>', '')
                         try:
-                            query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = '{output['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `{output['name']}`")    
-                            # query_lines.append(f"SAFE_CAST(topic{input_count} as {input_['type']}) as `{input_['name'].replace('_partition', 'partition')}`")
+                            query_lines.append(f"\n    (SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type.replace('ADDRESS','STRING')})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = 'output_{'0' if output['name'] == 'output_0' else output['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), '|||')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS {cast_type.replace('ADDRESS','STRING')}) IS NOT NULL) AS `output_{'0' if output['name'] == 'output_0' else output['name']}`")    
                         except KeyError as e:
-                            query_lines.append(f"(SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = 'output_{output_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), ',')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS BIGNUMERIC) IS NOT NULL) AS `output_{output_count}`")    
+                            query_lines.append(f"\n    (SELECT ARRAY_AGG(SAFE_CAST(item AS {cast_type.replace('ADDRESS','STRING')})) as weights FROM UNNEST(SPLIT((SELECT MAX(IF(d.key = 'output_{output_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d), '|||')) AS item WHERE item IS NOT NULL AND SAFE_CAST(item AS {cast_type.replace('ADDRESS','STRING')}) IS NOT NULL) AS `output_{output_count}`")    
                             output_count = output_count + 1
                     else:
                         try:
-                            query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = '{output['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {output['type']}) AS `{output['name']}`")
+                            query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = 'output_{'0' if output['name'] == 'output_0' else output['name']}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {output['type'].replace('ADDRESS','STRING')}) AS `output_{'0' if output['name'] == 'output_0' else output['name']}`")
                         except KeyError as e:
-                            query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = 'output_{output_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {output['type']}) AS `output_{output_count}`")
+                            query_lines.append(f"SAFE_CAST((SELECT MAX(IF(d.key = 'output_{output_count}', d.value, NULL)) FROM UNNEST(decoded_values) AS d) AS {output['type'].replace('ADDRESS','STRING')}) AS `output_{output_count}`")
                             output_count = output_count + 1
-                query_body = create_call_query_body_array(fxn_table, contract_addresses, hash_ids, query_lines, current_min_ts, name_space,table_name)
+                query_body = create_call_query_body_array(fxn_table, hash_ids, contract_addresses, query_lines, current_min_ts, name_space,table_name)
             else:
                 for input_ in input_json_array:
-                    try:        
-                        query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * input_count}, {64}) as {input_['type']}) as `{input_['name']}`")
-                    except KeyError as e:
-                        query_lines.append(f"SAFE_CAST(SUBSTRING(input, {11 + 64 * input_count}, {64}) as {input_['type']}) as input_{input_count}")
-                    input_count = input_count + 1
-                for output in output_json_array:
-                    output_query_sql.append(f"SAFE_CAST(SUBSTRING(output, {64 * output_count}, {64}) as {output['type']}) as {output['name']}")
-                    output_count = output_count + 1
-                query_body = create_call_query_body_sql(fxn_table, contract_addresses, hash_ids, query_lines, current_min_ts, name_space,table_name)
-
+                    if input_['type'] == 'BIGNUMERIC' or input_['type'] == 'INT64':
+                        try:        
+                            query_lines.append(f"\n    SAFE_CAST(udfs.hexToInt(CONCAT('0x', SUBSTRING(input, {11 + 64 * input_count}, {64}))) as {input_['type']}) as `{input_['name']}`")
+                        except KeyError as e:
+                            query_lines.append(f"\n    SAFE_CAST(udfs.hexToInt(CONCAT('0x', SUBSTRING(input, {11 + 64 * input_count}, {64}))) as {input_['type']}) as input_{input_count}")
+                        input_count = input_count + 1
+                            
+                    elif input_['type'] == 'ADDRESS':
+                        try:        
+                            query_lines.append(f"\n    SAFE_CAST(CONCAT('0x',RIGHT(SUBSTRING(input, {11 + 64 * input_count}, {64}),40)) as STRING) as `{input_['name']}`")
+                        except KeyError as e:
+                            query_lines.append(f"\n    SAFE_CAST(CONCAT('0x',RIGHT(SUBSTRING(input, {11 + 64 * input_count}, {64}),40)) as STRING) as input_{input_count}")
+                        input_count = input_count + 1
+                    elif input_['type'] == 'BOOL':
+                        try:        
+                            query_lines.append(f"\n    SAFE_CAST(SAFE_CAST(udfs.hexToInt(CONCAT('0x', SUBSTRING(input, {11 + 64 * input_count}, {64}))) as INT) as {input_['type']}) as `{input_['name']}`")
+                        except KeyError as e:
+                            query_lines.append(f"\n    SAFE_CAST(SAFE_CAST(udfs.hexToInt(CONCAT('0x', SUBSTRING(input, {11 + 64 * input_count}, {64})))) as INT) as {input_['type']}) as input_{input_count}")
+                        input_count = input_count + 1
+                    else:
+                        try:        
+                            query_lines.append(f"\n    SAFE_CAST(SUBSTRING(input, {11 + 64 * input_count}, {64}) as {input_['type']}) as `{input_['name']}`")
+                        except KeyError as e:
+                            query_lines.append(f"\n    SAFE_CAST(SUBSTRING(input, {11 + 64 * input_count}, {64}) as {input_['type']}) as input_{input_count}")
+                        input_count = input_count + 1
+                for output_ in output_json_array:
+                    if output_['type'] == 'BIGNUMERIC' or input_['type'] == 'INT64':
+                        query_lines.append(f"\n    SAFE_CAST(udfs.hexToInt(CONCAT('0x', SUBSTRING(output, {3 + 64 * output_count}, {64}))) as {output_['type']}) as output_{'0' if output_['name'] == 'output_0' else output_['name']}")
+                        output_count = output_count + 1
+                    elif output_['type'] == 'ADDRESS':
+                        query_lines.append(f"\n    SAFE_CAST(CONCAT('0x',RIGHT(SUBSTRING(output, {3 + 64 * output_count}, {64}), 40)) as STRING) as output_{'0' if output_['name'] == 'output_0' else output_['name']}")
+                        output_count = output_count + 1
+                    elif output_['type'] == 'BOOL':
+                        query_lines.append(f"\n    SAFE_CAST(SAFE_CAST(udfs.hexToInt(CONCAT('0x', SUBSTRING(output, {3 + 64 * output_count}, {64}))) as INT) as {output_['type']}) as output_{'0' if output_['name'] == 'output_0' else output_['name']}")
+                        output_count = output_count + 1
+                        print(table_name)
+                    else:
+                        query_lines.append(f"\n    SAFE_CAST(SUBSTRING(output, {3 + 64 * output_count}, {64}) as {output_['type']}) as output_{'0' if output_['name'] == 'output_0' else output_['name']}")
+                        output_count = output_count + 1
+                query_body = create_call_query_body_sql(fxn_table, hash_ids, contract_addresses, query_lines, current_min_ts, name_space,table_name)
             separate_models = count_duplicates(table_name, call_sub_name_counter)
             call_sub_name_counter.append(table_name)
             create_dbt_sql_file(query_body, table_name, name_space, separate_models)
@@ -659,3 +749,4 @@ for file in file_list:
                 
 print("total models:")
 print(count_5)
+
