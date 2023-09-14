@@ -1,0 +1,2 @@
+	
+["{\"name\":\"sender\",\"type\":\"ADDRESS\",\"index_type\":\"topic1\"},{\"name\":\"order\",\"type\":\"ARRAY<sellToken ADDRESS, buyToken ADDRESS, receiver ADDRESS, sellAmount BIGNUMERIC, buyAmount BIGNUMERIC, validTo INT64, appData STRING, feeAmount BIGNUMERIC, kind STRING, partiallyFillable BOOL, sellTokenBalance STRING, buyTokenBalance STRING>\",\"index_type\":\"data\"},{\"name\":\"signature\",\"type\":\"ARRAY<scheme INT64, data STRING>\",\"index_type\":\"data\"},{\"name\":\"data\",\"type\":\"STRING\",\"index_type\":\"data\"}"]

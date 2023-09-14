@@ -1,4 +1,5 @@
 import subprocess
+import re
 
 # Define the number of model paths to use
 num_model_paths = 10
@@ -14,7 +15,10 @@ print('dbt clean complete')
 
 with open('dbt_project.yml', 'r') as f:
     contents = f.read()
-updated_contents = contents.replace(f'model-paths: ["models_persistent"]', f'model-paths: ["models_0"]')
+
+# Use regular expressions to replace the value after 'model-paths:'
+updated_contents = re.sub(r'model-paths: \[.*\]', 'model-paths: ["models_0"]', contents)
+
 with open('dbt_project.yml', 'w') as f:
     f.write(updated_contents)
 
@@ -31,7 +35,7 @@ for i in range(num_model_paths):
     # Run dbt with the updated model path
     print(f'Running dbt with models_{i}...')
     final_i = i
-    subprocess.run(['dbt', 'run', f'--target={target_name}', f'--exclude=AggregationRouterV4_call_uniswapV3Swap.sql', f'--exclude=models_0/oneinch_ethereum/AggregationRouterV5_call_unoswap.sql'])
+    subprocess.run(['dbt', 'run', f'--target={target_name}'])
 
 
 with open('dbt_project.yml', 'r') as f:
