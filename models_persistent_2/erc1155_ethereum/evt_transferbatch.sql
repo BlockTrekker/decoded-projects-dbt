@@ -10,7 +10,7 @@ SELECT
     ARRAY(SELECT CASE WHEN SAFE_CAST(id as BIGNUMERIC) is null then SAFE_CAST(0 AS BIGNUMERIC) else SAFE_CAST(id as BIGNUMERIC) end FROM UNNEST(udfs.decodeTransferBatchIds(data)) as id) as ids,
     CONCAT('0x', RIGHT(topic1,40)) as operator,
     CONCAT('0x', RIGHT(topic3,40)) as `to`,
-    ARRAY(SELECT CASE WHEN SAFE_CAST(value as BIGNUMERIC) is null then SAFE_CAST(0 AS BIGNUMERIC) else SAFE_CAST(value as BIGNUMERIC) end FROM UNNEST(udfs.decodeTransferBatchValues(data)) as value) as values,
+    ARRAY(SELECT CASE WHEN value is null then null else udfs.hexToInt(value) end FROM UNNEST(udfs.decodeTransferBatchValues(data)) as value) as values,
     block_number as evt_block_number,
     block_time as evt_block_time,
     index as evt_index,

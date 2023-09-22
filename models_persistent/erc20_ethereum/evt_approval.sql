@@ -9,7 +9,7 @@ SELECT
     contract_address,
     CONCAT('0x', RIGHT(topic1,40)) as `owner`,
     CONCAT('0x', RIGHT(topic2,40)) as spender,
-    SAFE_CAST(udfs.hexToInt(data) as BIGNUMERIC) `value`,
+    udfs.hexToInt(data) as `value`,
     block_number as evt_block_number,
     block_time as evt_block_time,
     index as evt_index,

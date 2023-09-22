@@ -138,6 +138,7 @@ def json_array_from_array(array_string, input_name, index_type, parent_path=None
     # Extract the content within the angle brackets, case-insensitively
     match = re.search(r'(?i)ARRAY<(.+)>', array_string)
     if not match:
+        print("warning")
         return None
 
     # If parent_path is not specified, set it to its default value
@@ -146,16 +147,20 @@ def json_array_from_array(array_string, input_name, index_type, parent_path=None
             parent_path = f"$.input.{input_name}"
         elif index_type == "output":
             parent_path = f"$.output.{input_name}"
+            input_name = f"output_{'0' if input_name == 'output_0' else input_name}"
         else:
             parent_path = f"$.{index_type}"
 
     content = match.group(1)
     sections = content.split(", ")
 
-    if len(sections) == 1 & count == None:
+    if len(sections) == 1 and count == 0:
         # Handle the case where the array is a single type
         name, data_type = sections[0].split(" ")
-        query = f"\n    JSON_VALUE_ARRAY(decoded_values, '{parent_path}.{name}') AS `{name}`"
+        if data_type == "STRING" or data_type == "ADDRESS" or data_type == "BIGNUMERIC" or data_type == "BOOL":
+            query = f"\n    JSON_VALUE_ARRAY(decoded_values, '{parent_path}') AS `{name}`"            
+        else:
+            query = f"\n    blocktrekker.udfs.array_string_to_bignumeric(JSON_VALUE_ARRAY(decoded_values, '{parent_path}')) AS `{name}`"
         return query
     if count == 0:
         as_string = "\n        AS `" + input_name + "`"
@@ -183,7 +188,10 @@ def json_array_from_array(array_string, input_name, index_type, parent_path=None
             except ValueError:
                 print(f"Error parsing array: {array_string}, section: {section}, parent_path: {parent_path}")
                 continue
-            line = f"    '{name}', JSON_VALUE_ARRAY(decoded_values, '{parent_path}.{name}')"
+            if data_type == "STRING" or data_type == "ADDRESS" or data_type == "BIGNUMERIC" or data_type == "BOOL":
+                line = f"    '{name}', JSON_VALUE_ARRAY(decoded_values, '{parent_path}.{name}')"                
+            else:
+                line = f"    '{name}', blocktrekker.udfs.array_string_to_bignumeric(JSON_VALUE_ARRAY(decoded_values, '{parent_path}.{name}'))"
             query_lines.append(line)
 
 
@@ -377,6 +385,7 @@ for file in file_list:
         output_count = 0
         query_lines = []
         output_query_sql = []
+
         for input_ in input_json_array:
             if type == 'call':
                 input_['index_type'] = 'input'
@@ -385,38 +394,47 @@ for file in file_list:
         # There's at least one input of type 'ARRAY' this will impact the query body
             arrays = True
             for input_ in input_json_array:
+                print(str(input_))
+                input_['type'] = input_['type'].replace('ADDRESS', 'STRING')
                 if input_['type'].startswith('ARRAY'):
                     cast_type = input_['type'].replace('ARRAY', '').replace('<', '').replace('>', '')
                     json_object = json_array_from_array(input_['type'], input_['name'],input_['index_type'])
                     query_lines.append(json_object) 
                 else:
                     try:
-                        query_lines.append(f"\n    JSON_VALUE(decoded_values, '$.{input_['index_type']}.{input_['name']}') AS `{input_['name']}`")
+                        query_lines.append(f"\n    SAFE_CAST(JSON_VALUE(decoded_values, '$.{input_['index_type']}.{input_['name']}') AS {input_['type']}) AS `{input_['name']}`")
                     except KeyError as e:
-                        query_lines.append(f"\n    JSON_VALUE(decoded_values, '$.{input_['index_type']}.{input_['name']}') AS `input_{input_count}`")
+                        query_lines.append(f"\n    SAFE_CAST(JSON_VALUE(decoded_values, '$.{input_['index_type']}.{input_['name']}') AS {input_['type']}) AS `input_{input_count}`")
                         input_count = input_count + 1
             if type == 'call':
+                print(str(output_json_array))
                 for output in output_json_array:
+                    output['type'] = output['type'].replace('ADDRESS', 'STRING')
                     if output['type'].startswith('ARRAY'):
                         cast_type = output['type'].replace('ARRAY', '').replace('<', '').replace('>', '')
                         json_object = json_array_from_array(output['type'], output['name'],'output')
                         query_lines.append(json_object) 
-                else:
-                    try:
-                        query_lines.append(f"\n    JSON_VALUE(decoded_values, '$.output.{output['name']}') AS `{output['name']}`")
-                    except KeyError as e:
-                        query_lines.append(f"\n    JSON_VALUE(decoded_values, '$.output.{output['name']}') AS `output_{output_count}`")
-                        output_count = output_count + 1
+                    else:
+                        try:
+                            query_lines.append(f"\n    SAFE_CAST(JSON_VALUE(decoded_values, '$.output.{output['name']}') AS {output['type']}) AS `output_{'0' if output['name'] == 'output_0' else output['name']}`")
+                        except KeyError as e:
+                            query_lines.append(f"\n    SAFE_CAST(JSON_VALUE(decoded_values, '$.output.{output['name']}') AS {output['type']}) AS `output_{output_count}`")
+                            output_count = output_count + 1
         else:
             arrays = False
-            topic_count = 0
+            topic_count = 1
             for input_ in input_json_array:
                 if input_['index_type'] == 'topic':
-                    if input_['type'] == 'BIGNUMERIC' or input_['type'] == 'INT64':
+                    if input_['type'] == 'INT64':
                         try:
                             query_lines.append(f"\n    SAFE_CAST(udfs.hexToInt({input_['index_type']}{str(topic_count)}) as {input_['type']}) as `{input_['name'].replace('_partition', 'partition')}`")
                         except KeyError as e:
                             query_lines.append(f"\n    SAFE_CAST(udfs.hexToInt({input_['index_type']}{str(topic_count)}) as as {input_['type']}) as input_{input_count}\n")
+                    elif input_['type'] == 'BIGNUMERIC':
+                        try:
+                            query_lines.append(f"\n    udfs.hexToInt({input_['index_type']}{str(topic_count)}) as `{input_['name'].replace('_partition', 'partition')}`")
+                        except KeyError as e:
+                            query_lines.append(f"\n    udfs.hexToInt({input_['index_type']}{str(topic_count)}) as input_{input_count}\n")
                     elif input_['type'] == 'ADDRESS':
                         try: 
                             query_lines.append(f"\n    SAFE_CAST(CONCAT('0x', RIGHT({input_['index_type']}{str(topic_count)}, 40)) as STRING) as `{input_['name'].replace('_partition', 'partition')}`")
@@ -434,11 +452,16 @@ for file in file_list:
                             query_lines.append(f"\n    SAFE_CAST({input_['index_type']}{str(topic_count)} as {input_['type']}) as input_{input_count}")
                     topic_count = topic_count + 1
                 else: 
-                    if input_['type'] == 'BIGNUMERIC' or input_['type'] == 'INT64':
+                    if input_['type'] == 'INT64':
                         try: 
                             query_lines.append(f"\n    SAFE_CAST(udfs.hexToInt(CONCAT('0x' ,SUBSTRING({input_['index_type']}, {3 + 64 * input_count}, {64}))) as {input_['type']}) as `{input_['name']}`")
                         except KeyError as e:
                             query_lines.append(f"\n    SAFE_CAST(udfs.hexToInt(CONCAT('0x', SUBSTRING({input_['index_type']}, {3 + 64 * input_count}, {64}))) as {input_['type']}) as input_{input_count}\n")
+                    elif input_['type'] == 'BIGNUMERIC':
+                        try: 
+                            query_lines.append(f"\n    udfs.hexToInt(CONCAT('0x' ,SUBSTRING({input_['index_type']}, {3 + 64 * input_count}, {64}))) as `{input_['name']}`")
+                        except KeyError as e:
+                            query_lines.append(f"\n    udfs.hexToInt(CONCAT('0x', SUBSTRING({input_['index_type']}, {3 + 64 * input_count}, {64}))) as input_{input_count}\n")                    
                     elif input_['type'] == 'ADDRESS':
                         try: 
                             query_lines.append(f"\n    SAFE_CAST(CONCAT('0x', RIGHT(SUBSTRING({input_['index_type']}, {3 + 64 * input_count}, {64}), 40)) as STRING) as `{input_['name'].replace('_partition', 'partition')}`")
@@ -457,9 +480,11 @@ for file in file_list:
                     input_count = input_count + 1
             if type == 'call':
                 for output_ in output_json_array:
-                    print("output name: " + output_['name'])
-                    if output_['type'] == 'BIGNUMERIC' or input_['type'] == 'INT64':
+                    if input_['type'] == 'INT64':
                         query_lines.append(f"\n    SAFE_CAST(udfs.hexToInt(CONCAT('0x', SUBSTRING(output, {3 + 64 * output_count}, {64}))) as {output_['type']}) as output_{'0' if output_['name'] == 'output_0' else output_['name']}")
+                        output_count = output_count + 1
+                    elif output_['type'] == 'BIGNUMERIC':
+                        query_lines.append(f"\n    udfs.hexToInt(CONCAT('0x', SUBSTRING(output, {3 + 64 * output_count}, {64}))) as output_{'0' if output_['name'] == 'output_0' else output_['name']}")
                         output_count = output_count + 1
                     elif output_['type'] == 'ADDRESS':
                         query_lines.append(f"\n    SAFE_CAST(CONCAT('0x',RIGHT(SUBSTRING(output, {3 + 64 * output_count}, {64}), 40)) as STRING) as output_{'0' if output_['name'] == 'output_0' else output_['name']}")
@@ -476,7 +501,6 @@ for file in file_list:
         create_dbt_sql_file(query_body, table_name, name_space, separate_models)
         count_5 = count_5 + 1
 
-                
 print("total models:")
 print(count_5)
 

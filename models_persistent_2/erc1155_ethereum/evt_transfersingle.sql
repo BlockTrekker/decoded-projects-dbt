@@ -10,7 +10,7 @@ SELECT
     SAFE_CAST(udfs.hexToInt(LEFT(data, 66)) as BIGNUMERIC) as id,
     CONCAT('0x', RIGHT(topic1,40)) as operator,
     CONCAT('0x', RIGHT(topic3,40)) as `to`,
-    SAFE_CAST(udfs.hexToInt(CONCAT("0x", RIGHT(data, 64))) as BIGNUMERIC) as `value`,
+    udfs.hexToInt(CONCAT("0x", RIGHT(data, 64))) as `value`,
     block_number as evt_block_number,
     block_time as evt_block_time,
     index as evt_index,
