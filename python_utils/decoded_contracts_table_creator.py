@@ -94,7 +94,7 @@ def generate_config(name_space):
     return f"""
 {{{{
     config(
-        materialized='table',
+        materialized='incremental',
         schema='{name_space}',
         name='{name_space}',
     )
@@ -212,40 +212,51 @@ def count_duplicates(string, string_list):
     counts = Counter(string_list)
     return counts[string]
 
-# Your main functions now become shorter and clearer
 def create_query_body_sql(type, name_space, hash_ids, current_min_ts, query_lines, table_name, arrays):
-
+    # insert the incremental ending regardless of type.  
+    incremental_ending = """AND
+{% if is_incremental() %} 
+    block_time > (current_timestamp() - INTERVAL 1 day)
+{% else %}""" + f"""
+    block_time >= '{current_min_ts}'
+""" + "{% endif %}"
+    
     if type == 'call':
-        table_type = "{{ source('ethereum', 'traces') }}"
+        table_type = """{% if is_incremental() %}
+    {{ source('ethereum','one_day_traces') }}
+{% else %}
+    {{ source('ethereum','traces_clustered') }}
+{% endif %}"""
         cte_lines = call_cte_lines
         main_lines = call_main_lines
         decode_fx = 'DECODE_CALL_ENTRY'
         where_clause = f"""WHERE
         method_id in ({hash_ids}) 
-    AND `to` IN (SELECT * FROM contract_addresses)
-    AND block_time >= '{current_min_ts}'"""
+    AND `to` IN (SELECT * FROM contract_addresses)"""
         from_line = f"""CASE 
             WHEN success = TRUE THEN udfs.{decode_fx}(`to`, tx_hash, iface, input, output) 
             ELSE NULL 
             END as decoded_values
     FROM {table_type} AS f
     CROSS JOIN iface_extract"""
-        # if the type is event
-    
+        
+    # if the type is event
     else:
-        table_type = "{{ source('ethereum', 'logs') }}"
+        table_type = """{% if is_incremental() %}
+    {{ source('ethereum','one_day_logs') }}
+{% else %}
+    {{ source('ethereum','logs_clustered') }}
+{% endif %}"""
         decode_fx = 'DECODE_LOG_ENTRY(topic0, topic1, topic2, topic3, data, iface)'
         cte_lines = event_cte_lines
         main_lines = event_main_lines
         where_clause = f"""WHERE
     evt_hash in ({hash_ids}) 
 AND 
-    contract_address IN (SELECT * FROM contract_addresses)
-AND 
-    block_time >= '{current_min_ts}'"""
+    contract_address IN (SELECT * FROM contract_addresses)"""
         from_line = f"""udfs.{decode_fx} as decoded_values
         FROM {table_type} AS f
-        CROSS JOIN iface_extract"""
+        CROSS JOIN iface_extract"""        
 
     if arrays == True:
         iface_extract = generate_iface_extract(table_name, type)
@@ -253,23 +264,27 @@ AND
     SELECT
 {cte_lines}
         {from_line}
-        {where_clause}
+    {where_clause}
+    {incremental_ending}
     )"""    
         main = f"""SELECT
     {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else ''}
     {main_lines}
     FROM cte"""
+        # setting the incremental ending to null since we inserted it in the cte
+        incremental_ending = ""
 
     else:
         cte = ""
         iface_extract = ""
         from_line = f"""FROM
-    {table_type}
+{table_type}
     {where_clause}"""
         main = f"""SELECT
     {','.join(query_lines) + ',' if query_lines != [] and query_lines != '' else ''}
 {cte_lines}
-{from_line}"""
+{from_line}
+"""
 
     query_body = f"""
 {generate_config(name_space)}
@@ -277,6 +292,7 @@ AND
 {iface_extract}
 {cte}
 {main}
+{incremental_ending}
 """
     return query_body
 
@@ -401,6 +417,8 @@ for file in file_list:
                     json_object = json_array_from_array(input_['type'], input_['name'],input_['index_type'])
                     query_lines.append(json_object) 
                 else:
+                    if input_['type'] == 'BIGNUMERIC':
+                        input_['type'] = 'STRING'
                     try:
                         query_lines.append(f"\n    SAFE_CAST(JSON_VALUE(decoded_values, '$.{input_['index_type']}.{input_['name']}') AS {input_['type']}) AS `{input_['name']}`")
                     except KeyError as e:

@@ -25,21 +25,38 @@ sources:
       - name: clustered_traces
       - name: address_to_ordinal_dune  
 
-  - name: crypto_ethereum_contracts
-    database: bigquery-public-data
-    schema: crypto_ethereum
-    description: "Ethereum Contracts from Public Crypto Dataset"
-    tables:
-      - name: contracts
-        schema: crypto_ethereum
-  
   - name: ethereum
     schema: ethereum
+    tables:
+      - name: transactions
+      - name: logs_clustered
+      - name: one_day_logs
+      - name: logs
+      - name: traces_clustered
+      - name: one_day_traces
+      - name: traces
+      - name: blocks
+      - name: contracts
+      - name: token_types
+
+  - name: goog_mainnet_ethereum
+    database: bigquery-public-data
+    schema: goog_blockchain_ethereum_mainnet_us
+    description: "Ethereum logs from new Crypto Dataset"
     tables:
       - name: transactions
       - name: logs
       - name: traces
       - name: blocks
       - name: contracts
-      - name: token_types
 
+  - name: crypto_ethereum
+    database: bigquery-public-data
+    schema: crypto_ethereum
+    description: "Ethereum logs from new Crypto Dataset"
+    tables:
+      - name: transactions
+      - name: logs
+      - name: traces
+      - name: blocks
+      - name: contracts

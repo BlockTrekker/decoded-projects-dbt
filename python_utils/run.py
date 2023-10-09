@@ -18,7 +18,7 @@ while True:
 # Step 1: Empty the 'models' directory and refill with 'models_persistent'
 print("ok... Starting now")
 try:
-    for i in range(160):
+    for i in range(10):
         if os.path.isdir(f'models_{i}'):
             shutil.rmtree(f'models_{i}')
     print("emptied the 'models' directories")
@@ -51,14 +51,14 @@ while True:
     else:
         print("Invalid input. Please enter Y or N.")
 
-# Step 3: Run 'python_utils/decoded_contracts_table_creator_fresh_json.py'
-print("running decoded_contracts_table_creator_fresh_json_simplify.py")
+# Step 3: Run 'python_utils/decoded_contracts_table_creator.py'
+print("running decoded_contracts_table_creator_fresh.py")
 print("this will move the query results to a bucket, then download csv files to the 'static_data' directory in batches")
 print("it will then create 300k+ dbt model files in the models directory")
 try:
-    subprocess.run(['python', 'python_utils/decoded_contracts_table_creator_fresh_json_simplify.py'], check=True)
+    subprocess.run(['python', 'python_utils/decoded_contracts_table_creator.py'], check=True)
 except subprocess.CalledProcessError as e:
-    print(f"Error running decoded_contracts_table_creator_fresh.py: {e}")
+    print(f"Error running decoded_contracts_table_creator.py: {e}")
     exit(1)
 
 # Step 4: Run 'dbt run --target prod' through the model_change_script.py

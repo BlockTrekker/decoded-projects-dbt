@@ -1,5 +1,16 @@
 from google.cloud import bigquery
 import os
+from concurrent.futures import ThreadPoolExecutor
+
+def run_query(query_string):
+    """Run a single query and return its result."""
+    query_job = client.query(query_string)
+    result = query_job.result()
+    
+    if query_job.errors:
+        return ("Error", query_job.errors)
+    else:
+        return ("Success", None)
 
 # Set the path to the JSON key file for the service account
 credential_path = "../keys/blocktrekker-admin.json"
@@ -20,31 +31,24 @@ dataset_ref = "decoded_projects"
 # Set the query table
 table_ref = "delete"
 
-
 # Set the query string
 query_string = f"""
 SELECT *
 FROM `{project_id}.{dataset_ref}.{table_ref}`
 """
 
-print(query_string)
-
 # Execute the query and fetch the result
 query_job = client.query(query_string)
 result = query_job.result()
 
 delete_count = 0
+query_strings_to_run = [row[0] for row in result]
 
-# Iterate over each row in the result
-for row in result:
-    # Access each column of the row by name or index
-    new_query_string = row[0]
-
-    # now query with the result as the query string
-    query_job = client.query(new_query_string)
-    result = query_job.result()
-
-    if query_job.errors:
-        print("Error running query: {}".format(query_job.errors))
-    else:
-        print("success: {}".format(delete_count))
+# Use ThreadPoolExecutor to run queries in parallel
+with ThreadPoolExecutor(max_workers=32) as executor:
+    for status, error in executor.map(run_query, query_strings_to_run):
+        if status == "Error":
+            print(f"Error running query: {error}")
+        else:
+            delete_count += 1
+            print(f"success: {delete_count}")

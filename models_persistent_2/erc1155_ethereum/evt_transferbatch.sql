@@ -1,9 +1,13 @@
 {{ config(
-    materialized='table',
+    materialized='incremental',
     schema='erc1155_ethereum',
     name='evt_Transferbatch',
 )
 }}
+
+-- depends_on: {{ source('ethereum','one_day_logs') }}
+-- depends_on: {{ source('ethereum','logs_clustered') }}
+
 SELECT
     contract_address,
     CONCAT('0x', RIGHT(topic2,40)) as `from`,
@@ -17,8 +21,16 @@ SELECT
     tx_hash as evt_tx_hash,
     evt_hash
 FROM
-    {{ source('ethereum','logs') }}
+{% if is_incremental() %}
+    {{ source('ethereum','one_day_logs') }}
+{% else %}
+    {{ source('ethereum','logs_clustered') }}
+{% endif %}
 WHERE
     evt_hash = '0x4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb'
 AND
     contract_address in (SELECT contract_address FROM {{ source('ethereum', 'token_types') }} WHERE erc1155 is true)
+{% if is_incremental() %}
+AND 
+    block_time > (current_timestamp() - INTERVAL 1 day)
+{% endif %}  

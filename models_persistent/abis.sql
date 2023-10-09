@@ -1,8 +1,9 @@
 
 {{ config(
-    materialized='view',
+    materialized='table',
     schema='decoded_contracts',
     name='decoded_contracts',
+    cluster_by=['name','namespace']
 )
 }}
 

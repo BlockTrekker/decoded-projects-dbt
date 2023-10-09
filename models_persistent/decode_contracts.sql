@@ -30,9 +30,9 @@ WITH ungrouped AS (
       evt.inputs as inputs,
       CAST(NULL AS STRING) AS outputs
     FROM
-      {{ ref('dune_abis') }} a
+      {{ ref('abis') }} a
     LEFT JOIN 
-      {{ source('crypto_ethereum_contracts', 'contracts')}} c
+      {{ source('crypto_ethereum', 'contracts')}} c
     ON
       c.address = a.address
     LEFT JOIN UNNEST(blocktrekker.udfs.PARSE_ABI_EVENTS(abi,a.name)) AS evt
@@ -68,9 +68,9 @@ WITH ungrouped AS (
       call.inputs as inputs,
       call.outputs AS outputs
     FROM
-      {{ ref('dune_abis') }} a
+      {{ ref('abis') }} a
     LEFT JOIN 
-      {{ source('crypto_ethereum_contracts', 'contracts')}} c
+      {{ source('crypto_ethereum', 'contracts')}} c
     ON
       c.address = a.address
     LEFT JOIN UNNEST(blocktrekker.udfs.PARSE_ABI_FUNCTIONS(abi,a.name)) AS call
