@@ -7,11 +7,6 @@ model_paths = ["models_persistent", "models_persistent_1", "models_persistent_2"
 # Define the path to your dbt project and the name of the target to run
 target_name = 'prod'
 
-# Run dbt clean
-print('Running dbt clean...')
-subprocess.run(['dbt', 'clean', f'--target={target_name}'])
-print('dbt clean complete')
-
 # Read the dbt_project.yml file
 with open('dbt_project.yml', 'r') as f:
     contents = f.read()
@@ -24,8 +19,7 @@ for i, model_path in enumerate(model_paths):
         f.write(updated_contents)
 
     # Run dbt with the updated model path
-    print(f'Running dbt with {model_path}...')
-    subprocess.run(['dbt', 'run', '--target', target_name])
+    subprocess.run(['dbt', 'run', '--target', target_name, '--exclude', 'tag:non_incremental'])
 
 # Change the model path back to models_persistent
 with open('dbt_project.yml', 'r') as f:
