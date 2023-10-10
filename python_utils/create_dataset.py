@@ -6,7 +6,7 @@ def create_dataset(sql_body, dry_run = True):
 
     # First set the credentials 
 
-    credential_path = "../keys/blocktrekker-admin.json"
+    credential_path = "/keys/blocktrekker-admin.json"
     os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credential_path
     
     client = bigquery.Client()

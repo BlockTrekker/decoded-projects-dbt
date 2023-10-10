@@ -13,7 +13,7 @@ def run_query(query_string):
         return ("Success", None)
 
 # Set the path to the JSON key file for the service account
-credential_path = "../keys/blocktrekker-admin.json"
+credential_path = "/app/keys/blocktrekker-admin.json"
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credential_path
 
 # Create a client object

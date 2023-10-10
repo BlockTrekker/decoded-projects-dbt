@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: blocktrekker-daily-job
+spec:
+  schedule: "0 12 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: python-task
+            image: us-central1-docker.pkg.dev/blocktrekker/deploy-image-artifact/production:1
+            command:
+            - "/bin/sh"
+            - "-c"
+            - "python python_utils/run.py"
+            volumeMounts:
+            - mountPath: /app/keys
+              name: blocktrekker-key-volume
+          restartPolicy: OnFailure
+          volumes:
+          - name: blocktrekker-key-volume
+            secret:
+              secretName: blocktrekker-key

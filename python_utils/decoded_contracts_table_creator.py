@@ -13,7 +13,7 @@ import time
 import re
 
 
-credential_path = "../keys/blocktrekker-admin.json"
+credential_path = "/app/keys/blocktrekker-admin.json"
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credential_path
 
 # Constants:

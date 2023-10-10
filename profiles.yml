@@ -5,7 +5,7 @@ blocktrekker_admin:
       type: bigquery # database type
       method: service-account # authentication method
       ### database-specific connection details
-      keyfile: ../keys/blocktrekker-admin.json
+      keyfile: /app/keys/blocktrekker-admin.json
       threads: 5
       project: blocktrekker
       schema: utils
@@ -18,7 +18,7 @@ blocktrekker_admin:
       type: bigquery # database type
       method: service-account # authentication method
       ### database-specific connection details
-      keyfile: ../keys/blocktrekker-admin.json
+      keyfile: /app/keys/blocktrekker-admin.json
       threads: 32
       project: blocktrekker
       schema: utils

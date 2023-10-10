@@ -1,0 +1,17 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blocktrekker-deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: blocktrekker-container
+        image: us-central1-docker.pkg.dev/blocktrekker/deploy-image-artifact/production:1
+        volumeMounts:
+        - name: blocktrekker-key-volume
+          mountPath: /app/keys
+      volumes:
+      - name: blocktrekker-key-volume
+        secret:
+          secretName: blocktrekker-key
